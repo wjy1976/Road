@@ -1,0 +1,956 @@
+﻿!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>羅德精技醫材訂貨系統 (Ver 5.2.7 Logo展開版)</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Google Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&family=Noto+Serif+TC:wght@700;900&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #f8fafc; -webkit-tap-highlight-color: transparent; }
+        .font-serif { font-family: 'Noto Serif TC', serif; }
+        input, select, textarea { font-size: 16px !important; } 
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-fade-in { animation: fadeIn 0.3s ease-out; }
+        .product-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.75rem; }
+        @media (min-width: 640px) { .product-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 1rem; } }
+        @media (min-width: 1024px) { .product-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1.5rem; } }
+        .category-grid { display: grid; grid-template-columns: 1fr; gap: 1rem; }
+        @media (min-width: 640px) { .category-grid { grid-template-columns: repeat(2, 1fr); } }
+        @media (min-width: 1024px) { .category-grid { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); } }
+        .product-card { transition: transform 0.2s, box-shadow 0.2s; }
+        .product-card:active { transform: scale(0.98); }
+        @media (min-width: 768px) { .product-card:hover { transform: translateY(-4px); box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.1); } }
+        .img-container { width: 100%; aspect-ratio: 1/1; background-color: #f1f5f9; display: flex; align-items: center; justify-content: center; overflow: hidden; border-radius: 0.5rem; position: relative; }
+        .img-container img { width: 100%; height: 100%; object-fit: cover; }
+        .category-card-elegant {
+            background: white; border-radius: 16px; padding: 20px; display: flex; flex-direction: column; justify-content: space-between; height: 140px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); border: 1px solid #e2e8f0; position: relative; overflow: hidden;
+        }
+        @media (min-width: 768px) { .category-card-elegant { height: 180px; padding: 24px; } }
+        .cat-icon-bg { position: absolute; right: -10px; bottom: -10px; opacity: 0.08; transform: rotate(-15deg); width: 80px; height: 80px; }
+        /* Mobile Modal Fullscreen */
+        @media (max-width: 640px) {
+            .mobile-modal { width: 100% !important; height: 100% !important; max-height: 100% !important; border-radius: 0 !important; display: flex; flex-direction: column; }
+            .mobile-modal-content { flex: 1; overflow-y: auto; }
+        }
+        .img-preview-overlay { background-color: rgba(0, 0, 0, 0.9); }
+        .chat-bubble { position: relative; padding: 12px; border-radius: 12px; max-width: 85%; }
+        .chat-bubble-user { background-color: #eff6ff; color: #1e3a8a; border-bottom-right-radius: 2px; margin-left: auto; }
+        .chat-bubble-admin { background-color: #f8fafc; color: #334155; border: 1px solid #e2e8f0; border-bottom-left-radius: 2px; margin-right: auto; }
+        .clickable-card:active { transform: scale(0.98); }
+        
+        .bg-elegant { background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); }
+        .btn-noble { background: linear-gradient(to right, #2c3e50, #4ca1af); box-shadow: 0 4px 15px rgba(44, 62, 80, 0.3); }
+        .text-gold { color: #b78628; }
+        
+        /* Logo Specific Styles */
+        .logo-text-zh { color: #255a9e; } /* Corporate Blue */
+        .logo-text-en { color: #255a9e; }
+        .logo-divider { background-color: #255a9e; }
+    </style>
+</head>
+<body class="text-slate-800 h-screen w-full overflow-hidden flex flex-col bg-slate-50">
+
+    <div id="app" class="h-full w-full flex flex-col relative overflow-hidden"></div>
+    <div id="message-container" class="fixed top-4 right-4 left-4 md:left-auto md:w-96 z-[100] pointer-events-none"></div>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const LOCAL_FIREBASE_CONFIG = {
+            apiKey: "AIzaSyCnGvyHtX7BADHQOoCsimWjT191YEgaoJs",
+            authDomain: "roadbiomed-28961.firebaseapp.com",
+            projectId: "roadbiomed-28961",
+            storageBucket: "roadbiomed-28961.firebasestorage.app",
+            messagingSenderId: "898023786208",
+            appId: "1:898023786208:web:ce4e3b605f4b8f159eb285",
+            measurementId: "G-CLG0WM8T3P"
+        };
+
+        let firebaseConfig, app, auth, db, isConfigured = false, appId = 'road-v1';
+
+        try {
+            if (LOCAL_FIREBASE_CONFIG && LOCAL_FIREBASE_CONFIG.apiKey) { 
+                firebaseConfig = LOCAL_FIREBASE_CONFIG; isConfigured = true; 
+            } else if (typeof __firebase_config !== 'undefined' && __firebase_config) { 
+                firebaseConfig = JSON.parse(__firebase_config); appId = typeof __app_id !== 'undefined' ? __app_id : appId; isConfigured = true; 
+            }
+
+            if (isConfigured) {
+                app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+            }
+        } catch (e) { console.error("Firebase Init Error", e); }
+
+        const TAIWAN_CITIES = [
+            "台北市", "新北市", "桃園市", "台中市", "台南市", "高雄市", "基隆市", "新竹市", "嘉義市", 
+            "新竹縣", "苗栗縣", "彰化縣", "南投縣", "雲林縣", "嘉義縣", "屏東縣", "宜蘭縣", "花蓮縣", "台東縣", 
+            "澎湖縣", "金門縣", "連江縣"
+        ];
+        
+        const CAT_MAP = {
+            'machine': '包藥機',
+            'paper': '包藥紙卷',
+            'medicine_bag': '夾鍊藥袋',
+            'parts': '零件',
+            'other': '其他'
+        };
+
+        const EXPENSE_CATS = {
+            'restock': '進貨成本',
+            'logistics': '物流運費',
+            'transport': '交通費用',
+            'office': '辦公雜支',
+            'salary': '人事薪資',
+            'rent': '房租水電',
+            'marketing': '行銷廣告',
+            'other': '其他支出'
+        };
+
+        // --- State ---
+        const state = {
+            users: [], currentUser: null, currentView: 'login', loginMode: 'select',
+            products: [], orders: [], expenses: [], repairs: [], cart: [],
+            isLoading: true,
+            showCartModal: false, showProductModal: false, showPaymentModal: false, showExpenseModal: false,
+            showRegisterModal: false, showProfileModal: false, showRepairModal: false, showRepairProcessModal: false, 
+            showClientRepairDetail: false, showAdminOrderModal: false, showClientHistoryModal: false,
+            showShipmentModal: false, 
+            activeShipmentOrder: null, 
+            registerRole: 'client',
+            showImagePreview: false, previewImageUrl: null,
+            activePaymentOrderDocId: null, activeRepairId: null, editingProduct: null, editingExpense: null,
+            activeCategory: null, activeCity: null, activeClientRepair: null,
+            activeHistoryClient: null, historyYearFilter: 'all',
+            dashboardView: 'main',
+            crmView: 'type', crmType: 'client', crmSearch: '',
+            orderFilter: 'all', orderSearch: '',
+            adminOrderDraft: { clientId: '', items: [] },
+            adminOrderFilters: { clientCity: '', clientSearch: '', prodCategory: '', prodSupplier: '', prodId: '' }
+        };
+
+        // --- Helpers ---
+        const formatMoney = (n) => new Intl.NumberFormat('zh-TW', { style: 'currency', currency: 'TWD', minimumFractionDigits: 0 }).format(n);
+        const generateOrderId = () => {
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            const hour = String(now.getHours()).padStart(2, '0');
+            const minute = String(now.getMinutes()).padStart(2, '0');
+            const second = String(now.getSeconds()).padStart(2, '0');
+            return `ORD-${year}${month}${day}-${hour}${minute}${second}`;
+        };
+        const showToast = (msg, type = 'success') => {
+            const container = document.getElementById('message-container');
+            const el = document.createElement('div');
+            el.className = `flex items-center p-4 mb-3 rounded-xl shadow-lg border-l-4 animate-fade-in bg-white ${type==='success'?'border-emerald-500 text-emerald-800':'border-red-500 text-red-800'}`;
+            el.innerHTML = `<i data-lucide="${type==='success'?'check-circle':'alert-circle'}" class="w-5 h-5 mr-3 flex-shrink-0"></i><span class="font-medium text-sm">${msg}</span>`;
+            container.appendChild(el); lucide.createIcons(); setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 2500);
+        };
+
+        // --- CRITICAL GLOBAL FUNCTIONS (Window Scope) ---
+        
+        window.deleteOrder = async (e, docId) => {
+            if(e) e.stopPropagation();
+            if(!docId) return showToast("訂單ID無效", "error");
+            if(confirm("確定要永久刪除此訂單嗎？\n此動作無法復原！")) {
+                try {
+                    await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'orders', docId));
+                    showToast("訂單已刪除");
+                } catch(err) { console.error(err); showToast("刪除失敗: " + err.message, "error"); }
+            }
+        };
+
+        window.deleteUser = async (e, docId) => {
+            if(e) e.stopPropagation();
+            if (!docId) return showToast("使用者ID無效", 'error');
+            const user = state.users.find(u => u.docId === docId);
+            if (!user) return showToast("找不到使用者", 'error');
+            if (user.username === state.currentUser.username) return showToast("不能刪除自己", 'error');
+            if (confirm(`確定刪除帳號: ${user.name}？\n所有相關資料將被移除。`)) {
+                try {
+                    await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', docId));
+                    showToast("帳號已刪除");
+                } catch(err) { console.error(err); showToast("刪除失敗: " + err.message, 'error'); }
+            }
+        };
+
+        window.toggleAdmin = async (e, docId) => {
+            if(e) e.stopPropagation();
+            if (!docId) return showToast("使用者ID無效", 'error');
+            const user = state.users.find(u => u.docId === docId);
+            if (!user) return showToast("找不到使用者", 'error');
+            if (user.username === state.currentUser.username) return showToast("不能變更自己的權限", 'error');
+            const newRole = user.role === 'admin' ? (user.type === 'supplier' ? 'supplier' : 'client') : 'admin';
+            const roleName = newRole === 'admin' ? '管理員' : '一般用戶';
+            if(confirm(`確定將 ${user.name} 的權限變更為 [${roleName}]？`)) {
+                try {
+                    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', docId), { role: newRole });
+                    showToast(`權限已更新為 ${roleName}`);
+                } catch(err) { console.error(err); showToast("更新失敗: " + err.message, 'error'); }
+            }
+        };
+
+        window.deleteProduct = async (e, docId) => {
+            if(e) e.stopPropagation();
+            if (!docId) return showToast("產品ID無效", 'error');
+            if(confirm("確定刪除此產品？\n此動作無法復原。")) {
+                try {
+                    await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'products', docId));
+                    showToast("產品已刪除");
+                } catch(err) { console.error(err); showToast("刪除失敗: " + err.message, 'error'); }
+            }
+        };
+
+        window.deleteExpense = async (e, docId) => {
+            if(e) e.stopPropagation();
+            if (!docId) return showToast("支出ID無效", 'error');
+            if(confirm("確定刪除此筆支出記錄？")) {
+                try {
+                    await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'expenses', docId));
+                    showToast("支出記錄已刪除");
+                } catch(err) { console.error(err); showToast("刪除失敗: " + err.message, 'error'); }
+            }
+        }
+
+        window.setAdminOrderClient = (id) => { state.adminOrderDraft.clientId = id; renderApp(); };
+        window.setAdminClientFilter = (k,v) => { state.adminOrderFilters[k] = v; renderApp(); };
+        window.setAdminProductFilter = (k,v) => { 
+            state.adminOrderFilters[k] = v;
+            if(k==='prodCategory') { state.adminOrderFilters.prodSupplier=''; state.adminOrderFilters.prodId=''; }
+            else if(k==='prodSupplier') { state.adminOrderFilters.prodId=''; }
+            renderApp();
+        };
+        window.adjustAdminQty = (d) => {
+            const el = document.getElementById('adminOrderQty');
+            if(el) { let v=parseInt(el.value)||1; v+=d; if(v<1)v=1; el.value=v; }
+        };
+
+        // --- Data Listeners ---
+        const initDataListeners = () => {
+            const collections = ['users', 'products', 'orders', 'expenses', 'repairs'];
+            collections.forEach(col => {
+                onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', col), (snap) => {
+                    const data = snap.docs.map(d => {
+                        const docData = d.data();
+                        return { ...docData, id: docData.id || d.id, docId: d.id };
+                    });
+                    if(col==='orders') state.orders = data.sort((a,b)=>new Date(b.date)-new Date(a.date));
+                    else if(col==='repairs') state.repairs = data.sort((a,b)=>b.createdAt - a.createdAt);
+                    else if(col==='expenses') state.expenses = data.sort((a,b)=>new Date(b.date)-new Date(a.date));
+                    else state[col] = data;
+                    if(col==='users') {
+                        state.isLoading = false; 
+                        if(state.currentUser) state.currentUser = data.find(u=>u.username===state.currentUser.username) || state.currentUser;
+                    }
+                    renderApp();
+                }, err => { console.error(err); state.isLoading = false; renderApp(); });
+            });
+        };
+
+        if (isConfigured) {
+            const initAuthFlow = async () => {
+                try {
+                    if (LOCAL_FIREBASE_CONFIG.apiKey) await signInAnonymously(auth);
+                    else if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token);
+                    else await signInAnonymously(auth);
+                } catch (e) { console.error("Auth", e); }
+            };
+            initAuthFlow();
+            onAuthStateChanged(auth, u => { if(u) initDataListeners(); });
+        }
+
+        // --- Other Window Functions ---
+        window.setLoginMode = m => { state.loginMode = m; renderApp(); };
+        window.handleLogin = e => {
+            e.preventDefault(); 
+            if(!isConfigured) return alert("請設定 Firebase");
+            if(state.users.length === 0 && !state.isLoading) return showToast("目前系統無任何帳號，請先點擊下方註冊", "error");
+            
+            const f = e.target;
+            const inputUser = f.username.value.trim();
+            const inputPass = f.password.value.trim();
+            const u = state.users.find(x => (x.username === inputUser || x.phone === inputUser) && x.password === inputPass);
+            
+            if(!u) return showToast('帳號或密碼錯誤', 'error');
+            if(state.loginMode === 'client' && u.role !== 'client') return showToast('請由內部/供應商入口登入', 'error');
+            if(state.loginMode === 'staff' && u.role === 'client') return showToast('請由醫師/藥師入口登入', 'error');
+            
+            state.currentUser = u; state.loginMode = 'select';
+            state.currentView = u.role==='admin' ? 'dashboard' : (u.role==='supplier' ? 'products' : 'shop');
+            showToast(`歡迎回來 ${u.name}`); renderApp();
+        };
+        
+        window.openModal = (type, id=null) => {
+            if (type === 'repair') state.showRepairModal = true;
+            else if (type === 'profile') state.showProfileModal = true;
+            else if (type === 'clientRepairDetail') { state.activeClientRepair = state.repairs.find(r => r.id === id); state.showClientRepairDetail = true; }
+            renderApp();
+        };
+        window.closeModal = (type) => {
+            if (type === 'repair') state.showRepairModal = false;
+            else if (type === 'profile') state.showProfileModal = false;
+            else if (type === 'ClientRepairDetail') state.showClientRepairDetail = false;
+            renderApp();
+        };
+        window.openRegisterModal = (role) => { state.registerRole = role; state.showRegisterModal = true; renderApp(); };
+        window.closeRegisterModal = () => { state.showRegisterModal = false; renderApp(); };
+        window.handleRegister = async e => {
+            e.preventDefault(); 
+            const f = e.target;
+            if(state.users.some(u=>u.username===f.registerName.value.trim())) return showToast('名稱已存在', 'error');
+            const role = state.users.length===0 ? 'admin' : state.registerRole;
+            await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'users'), {
+                username: f.registerName.value.trim(), password: f.password.value.trim(), role,
+                name: f.registerName.value.trim(), phone: f.phone.value.trim(), address: f.address.value.trim(),
+                city: f.city.value, type: f.type.value, note: ''
+            });
+            state.currentUser = { username: f.registerName.value.trim(), role }; 
+            state.showRegisterModal = false;
+            state.currentView = role==='admin'?'dashboard':(role==='supplier'?'products':'shop');
+            showToast('註冊成功');
+        };
+        window.logout = () => { state.currentUser = null; state.currentView = 'login'; state.cart=[]; renderApp(); };
+        window.setView = (v, f=null) => { state.currentView = v; state.dashboardView = 'main'; if(v==='shop') state.activeCategory=null; if(v==='orders' && f) state.orderFilter=f; else state.orderFilter='all'; renderApp(); };
+        window.setCategory = (c) => { state.activeCategory = c; renderApp(); };
+        window.updateCartModal = (s) => { state.showCartModal = s; renderApp(); };
+        window.setCRMView = (v, type=null, city=null) => { state.crmView = v; if(type) state.crmType = type; if(city) state.activeCity = city; state.crmSearch = ''; renderApp(); };
+        window.setOrderSearch = (v) => { state.orderSearch = v; renderApp(); };
+        window.setCRMSearch = (v) => { state.crmSearch = v; renderApp(); };
+        window.setDashboardView = (v) => { state.dashboardView = v; renderApp(); };
+        
+        // CRM History
+        window.openClientHistory = (clientDocId) => {
+            const client = state.users.find(u => u.docId === clientDocId);
+            if(!client) return;
+            state.activeHistoryClient = client;
+            state.historyYearFilter = 'all';
+            state.showClientHistoryModal = true;
+            renderApp();
+        };
+        window.closeClientHistory = () => { state.showClientHistoryModal = false; renderApp(); };
+        window.setHistoryYear = (y) => { state.historyYearFilter = y; renderApp(); };
+
+        // Product/Cart Logic
+        window.adjustShopQty = (id, d) => { const el=document.getElementById(`qty-${id}`); if(el){ let v=parseInt(el.value)||1; let m=parseInt(el.min)||1; v+=d; if(v<m)v=m; el.value=v; }};
+        window.togglePrintingOption = (id, cb) => {
+            const p = state.products.find(x => x.id === id);
+            const elPrice = document.getElementById(`price-${id}`);
+            const elMoq = document.getElementById(`moq-${id}`);
+            const elQty = document.getElementById(`qty-${id}`);
+            if(!p || !elPrice || !elQty) return;
+            let price = p.priceAfterTax;
+            let min = (p.paperSpec === '7cm_folded') ? 20 : (p.paperSpec === '14cm_unfolded' ? 8 : 1);
+            if(cb.checked) {
+                price = p.pricePrinted || price;
+                min = (p.paperSpec === '7cm_folded') ? 100 : 60;
+                if(elMoq) elMoq.innerText = `(MOQ: ${min})`;
+            } else {
+                if(elMoq) elMoq.innerText = `(MOQ: ${min})`;
+            }
+            elPrice.innerText = formatMoney(price);
+            elQty.min = min; elQty.value = min;
+        };
+        window.addToCart = (id, qtyId, printId) => {
+            const p = state.products.find(x => x.id === id);
+            let isPrinted = false;
+            if(printId) { const cb = document.getElementById(printId); if(cb && cb.checked) isPrinted = true; }
+            let pid = p.id, name = p.name, price = p.priceAfterTax, cost = p.cost, min = p.minOrderQty || 1;
+            if(p.category === 'paper') {
+                if(isPrinted) { pid+='_printed'; name+=' (印刷)'; price=p.pricePrinted||price; cost=p.costPrinted||cost; min=(p.paperSpec==='7cm_folded'?100:60); }
+                else { name+=' (空白)'; min=(p.paperSpec==='7cm_folded'?20:8); }
+            }
+            let qty = 1;
+            if(qtyId) { const el = document.getElementById(qtyId); if(el) qty = parseInt(el.value)||1; }
+            if(qty < min) return alert(`最低訂購量為 ${min}`);
+            const item = state.cart.find(x => x.productId === pid);
+            if(item) item.qty += qty;
+            else state.cart.push({ productId: pid, name, price, image: p.imageUrl, qty, minQty: min, cost, category: p.category, supplierName: p.supplierName, spec: p.spec });
+            showToast(`已加入 ${qty} 件`); renderApp();
+        };
+        window.updateCartQty = (id, d) => { const i = state.cart.find(x=>x.productId===id); if(i){ i.qty+=d; if(i.qty<i.minQty && d<0) state.cart = state.cart.filter(x=>x.productId!==id); } renderApp(); };
+        window.checkout = async () => {
+            if(state.cart.length===0) return;
+            const note = document.getElementById('orderNoteInput')?.value || '';
+            const total = state.cart.reduce((s,i)=>s+i.price*i.qty,0);
+            await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'orders'), {
+                id: generateOrderId(), clientId: state.currentUser.username, clientName: state.currentUser.name,
+                date: new Date().toISOString().split('T')[0], totalAmount: total, status: 'pending', paymentStatus: 'unpaid',
+                orderNote: note, items: state.cart
+            });
+            state.cart = []; state.showCartModal = false; showToast("訂單已送出"); state.currentView='orders'; renderApp();
+        };
+        
+        // Order Actions
+        window.openShipmentModal = (docId) => {
+            state.activeShipmentOrder = state.orders.find(o => o.docId === docId);
+            state.showShipmentModal = true;
+            renderApp();
+        };
+        window.closeShipmentModal = () => { state.showShipmentModal = false; renderApp(); };
+        
+        window.confirmShipment = async (e) => {
+            e.preventDefault();
+            const order = state.activeShipmentOrder;
+            if(!order) return;
+            
+            const f = e.target;
+            const createExpense = f.createExpense.checked;
+            const logisticsFee = Number(f.logisticsFee.value) || 0;
+            
+            try {
+                // 1. Update Order Status
+                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'orders', order.docId), { status: 'completed' });
+                
+                // 2. Create Expense if requested
+                if (createExpense && logisticsFee > 0) {
+                    await addDoc(collection(db,'artifacts',appId,'public','data','expenses'), {
+                        title: `訂單 ${order.id} 物流運費`, 
+                        amount: logisticsFee, 
+                        date: new Date().toISOString().split('T')[0],
+                        category: 'logistics',
+                        payee: '物流公司',
+                        receiptNo: '',
+                        note: `自動產生自訂單出貨: ${order.clientName}`
+                    });
+                    showToast('已出貨並新增支出記錄');
+                } else {
+                    showToast('已出貨');
+                }
+                state.showShipmentModal = false;
+                renderApp(); // Force Render to close modal
+            } catch(err) {
+                console.error(err);
+                showToast("出貨失敗: " + err.message, "error");
+            }
+        };
+
+        window.openPaymentModal = (docId) => { state.activePaymentOrderDocId = docId; state.showPaymentModal = true; renderApp(); };
+        window.confirmPayment = async (e) => { e.preventDefault(); if(state.activePaymentOrderDocId) { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'orders', state.activePaymentOrderDocId), { paymentStatus: 'paid', paymentDate: e.target.paymentDate.value }); showToast('已入帳'); state.showPaymentModal=false; renderApp(); }};
+        window.closePaymentModal = () => { state.showPaymentModal = false; renderApp(); };
+        
+        // Admin Order
+        window.openAdminOrderModal = () => { state.adminOrderDraft={clientId:'',items:[]}; state.adminOrderFilters={clientCity:'',clientSearch:'',prodCategory:'',prodSupplier:'',prodId:''}; state.showAdminOrderModal=true; renderApp(); };
+        window.closeAdminOrderModal = () => { state.showAdminOrderModal=false; renderApp(); };
+        window.addAdminOrderItem = () => {
+            const pid = state.adminOrderFilters.prodId;
+            if(!pid) return showToast("請先選擇產品", "error");
+            const p = state.products.find(x => x.id === pid);
+            const qty = Number(document.getElementById('adminOrderQty').value) || 1;
+            let price = p.priceAfterTax, unit = '';
+            if (p.category === 'paper' && p.rollsPerBox) { price *= p.rollsPerBox; unit = ` (箱/${p.rollsPerBox}捲)`; }
+            state.adminOrderDraft.items.push({ productId: p.id, name: p.name+unit, price, qty, cost: p.cost, category: p.category, spec: p.spec, supplierName: p.supplierName });
+            renderApp();
+        };
+        window.removeAdminOrderItem = (idx) => { state.adminOrderDraft.items.splice(idx, 1); renderApp(); };
+        window.submitAdminOrder = async () => {
+            try {
+                if(!state.adminOrderDraft.clientId) return alert('請選擇客戶');
+                if(state.adminOrderDraft.items.length===0) return alert('請加入商品');
+                const client = state.users.find(u => u.id === state.adminOrderDraft.clientId);
+                if (!client) throw new Error("找不到客戶資料");
+                const total = state.adminOrderDraft.items.reduce((s,i)=>s+i.price*i.qty,0);
+                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'orders'), { 
+                    id: generateOrderId(), clientId: client.username, clientName: client.name, 
+                    date: new Date().toISOString().split('T')[0], totalAmount: total, status: 'pending', paymentStatus: 'unpaid', 
+                    orderNote: '後台代客下單', items: state.adminOrderDraft.items 
+                });
+                state.showAdminOrderModal = false; showToast(`已為 ${client.name} 建立訂單`);
+                renderApp(); // Force Render
+            } catch (err) { alert("失敗: "+err.message); }
+        };
+
+        // Product Form
+        window.openProductModal = (id=null) => { 
+            state.editingProduct = id ? state.products.find(p=>p.id===id) : { taxRate: 5, category: 'machine', supplierName: state.currentUser?.role==='supplier'?state.currentUser.name:'' };
+            state.showProductModal = true; setTimeout(() => { window.onCategoryChange(); window.updateBoxPricePreview(); }, 0); renderApp(); 
+        };
+        window.closeProductModal = () => { state.showProductModal = false; renderApp(); };
+        window.calculatePrice = (src) => { 
+            const f = document.getElementById('productForm'); 
+            const isSup = state.currentUser?.role === 'supplier';
+            if(isSup) { if(src==='preTax') { const r = Number(f.price.value)||0; f.cost.value=Math.round(r*1.05); f.priceAfterTax.value=Math.round(r*1.05); } }
+            else { if(src==='preTax') f.priceAfterTax.value=Math.round(Number(f.price.value)*1.05); else if(src==='postTax') f.price.value=Math.round(Number(f.priceAfterTax.value)/1.05); }
+            window.updateBoxPricePreview(); 
+        };
+        window.onCategoryChange = () => { 
+            const f = document.getElementById('productForm'); if(!f) return; 
+            const cat = f.category.value; 
+            document.getElementById('moqField').style.display = cat==='medicine_bag'?'block':'none'; 
+            document.getElementById('paperField').style.display = cat==='paper'?'block':'none'; 
+            document.getElementById('stockField').style.display = (cat==='paper'||cat==='medicine_bag')?'none':'block'; 
+            document.getElementById('nameLabel').innerText = cat==='machine'?'型號':'品名';
+            window.updateBoxPricePreview(); 
+        };
+        window.updateBoxPricePreview = () => { 
+            const f = document.getElementById('productForm'); if(!f) return; 
+            const prev = document.getElementById('boxPricePreview'); 
+            if (f.category.value === 'paper') { 
+                const rolls = Number(f.rollsPerBox?.value) || 0; 
+                if (rolls > 0) { 
+                    const cost = Number(f.cost.value)||0; const pricePre = Number(f.price.value)||0; const pricePost = Number(f.priceAfterTax.value)||0; 
+                    const isSup = state.currentUser?.role === 'supplier';
+                    prev.innerHTML = isSup 
+                        ? `<div class="mt-3 p-3 bg-amber-50 border border-amber-200 rounded text-sm text-amber-900 font-bold">總成本(含稅): ${formatMoney(cost*rolls)}</div>`
+                        : `<div class="mt-3 p-3 bg-amber-50 border border-amber-200 rounded text-sm text-amber-900 font-bold grid grid-cols-2 gap-2"><span>總成本: ${formatMoney(cost*rolls)}</span><span>總售價(含稅): ${formatMoney(pricePost*rolls)}</span></div>`;
+                    prev.style.display = 'block'; return; 
+                } 
+            } 
+            if(prev) prev.style.display = 'none'; 
+        };
+        window.handleImageUpload = (input) => { 
+            if (input.files[0]) { 
+                const r = new FileReader(); 
+                r.onload = (e) => { 
+                    document.getElementById('imagePreview').src = e.target.result; document.getElementById('imagePreview').classList.remove('hidden');
+                    document.getElementById('imageUrlInput').value = e.target.result; 
+                }; 
+                r.readAsDataURL(input.files[0]); 
+            } 
+        };
+        window.saveProduct = async (e) => { 
+            e.preventDefault(); const f = e.target; const p = state.editingProduct; 
+            let name = f.name.value;
+            if(f.category.value === 'paper') { name = `包藥紙卷 (${f.paperSpec.value==='7cm_folded'?'7公分對折':'14公分不對折'})`; }
+            const d = { 
+                category: f.category.value, name, spec: f.spec?.value||'', supplierName: f.supplierName.value, 
+                cost: Number(f.cost.value), price: Number(f.price.value), priceAfterTax: Number(f.priceAfterTax.value), 
+                stock: Number(f.stock?.value)||0, safeStock: Number(f.safeStock?.value)||0, minOrderQty: Number(f.minOrderQty?.value)||1, 
+                rollsPerBox: Number(f.rollsPerBox?.value)||null, imageUrl: f.imageUrl.value, 
+                imageIcon: 'box', paperSpec: f.paperSpec?.value||null, hasPrinting: f.hasPrinting?.checked||false,
+                costPrinted: Number(f.costPrinted?.value)||0, pricePrinted: Number(f.pricePrinted?.value)||0, moqPrinted: Number(f.moqPrinted?.value)||0
+            }; 
+            if (p.id) await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'products', p.docId), d); 
+            else await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'products'), d); 
+            state.showProductModal = false; showToast("儲存成功"); 
+            renderApp(); // Force Render
+        };
+
+        // Other Modals
+        window.openImagePreview = (id) => { const i = state.repairs.find(r=>r.id===id); if(i?.imageUrl) { state.previewImageUrl=i.imageUrl; state.showImagePreview=true; renderApp(); }};
+        window.closeImagePreview = () => { state.showImagePreview=false; renderApp(); };
+        window.openProfileModal = () => { state.showProfileModal=true; renderApp(); };
+        window.closeProfileModal = () => { state.showProfileModal=false; renderApp(); };
+        window.saveProfile = async (e) => { 
+            e.preventDefault(); const f=e.target; 
+            await updateDoc(doc(db,'artifacts',appId,'public','data','users',state.currentUser.docId), {
+                phone: f.phone.value, address: f.address.value, note: f.note.value, city: f.city.value, type: f.type.value, preferredPaperSpec: f.preferredPaperSpec?.value
+            });
+            state.showProfileModal=false; showToast('已更新');
+            renderApp(); // Force Render
+        };
+        
+        // Expenses Logic
+        window.openExpenseModal = (id=null) => { 
+            state.editingExpense = id ? state.expenses.find(e => e.id === id) : null;
+            state.showExpenseModal = true; 
+            renderApp(); 
+            // Trigger change event to set initial state of payee field
+            setTimeout(() => {
+                const catSelect = document.getElementById('expenseCategorySelect');
+                if(catSelect) window.handleExpenseCatChange(catSelect);
+            }, 0);
+        };
+        window.closeExpenseModal = () => { state.showExpenseModal=false; state.editingExpense=null; renderApp(); };
+        window.saveExpense = async (e) => { 
+            e.preventDefault(); const f=e.target; 
+            const data = {
+                title: f.title.value, 
+                amount: Number(f.amount.value), 
+                date: f.date.value,
+                category: f.category.value,
+                payee: f.payee.value,
+                receiptNo: f.receiptNo.value,
+                note: f.note.value
+            };
+            
+            if (state.editingExpense && state.editingExpense.docId) {
+                await updateDoc(doc(db,'artifacts',appId,'public','data','expenses', state.editingExpense.docId), data);
+                showToast('已更新支出');
+            } else {
+                await addDoc(collection(db,'artifacts',appId,'public','data','expenses'), data); 
+                showToast('已新增支出');
+            }
+            state.showExpenseModal=false; 
+            renderApp(); // Force Render
+        };
+
+        window.handleExpenseCatChange = (el) => {
+            const payeeInput = document.getElementById('payeeInput');
+            if (!payeeInput) return;
+            if (el.value === 'restock') {
+                payeeInput.setAttribute('list', 'supplierList');
+                payeeInput.placeholder = "選擇供應商或自行輸入";
+            } else {
+                payeeInput.removeAttribute('list');
+                payeeInput.placeholder = "(選填)";
+            }
+        };
+        
+        window.submitRepair = async (e) => { e.preventDefault(); const f=e.target; await addDoc(collection(db,'artifacts',appId,'public','data','repairs'),{clientId:state.currentUser.username, clientName:state.currentUser.name, issue:f.issue.value, imageUrl:f.imageUrl.value, status:'pending', createdAt:Date.now(), date:new Date().toISOString().split('T')[0], cost:0, laborCost:0, parts:[], transportFee: 0}); state.showRepairModal=false; showToast('已叫修'); renderApp(); };
+        window.openRepairProcessModal = (id) => { state.activeRepairId=id; state.showRepairProcessModal=true; renderApp(); };
+        window.closeRepairProcessModal = () => { state.showRepairProcessModal=false; renderApp(); };
+        
+        window.fillPartDetails = (el) => {
+            const val = el.value;
+            const p = state.products.find(x => x.name === val);
+            if(p) {
+                const row = el.closest('.part-row');
+                const priceInput = row.querySelector('.part-price');
+                const costInput = row.querySelector('.part-cost');
+                if(priceInput) priceInput.value = p.priceAfterTax;
+                if(costInput) costInput.value = p.cost;
+                window.calcRepairTotal();
+            }
+        };
+
+        window.processRepair = async (e) => {
+            e.preventDefault(); const f=e.target; 
+            const parts=[]; 
+            document.querySelectorAll('.part-row').forEach(r=>{ 
+                parts.push({
+                    name:r.querySelector('input[type=text]').value, 
+                    price:Number(r.querySelector('.part-price').value)||0,
+                    cost:Number(r.querySelector('.part-cost').value)||0,
+                    qty:Number(r.querySelector('.part-qty').value)||1
+                }); 
+            });
+            const labor=Number(f.laborCost.value)||0;
+            const transportFee = f.hasTransportFee.checked ? (Number(f.transportFee.value)||0) : 0;
+            const total=parts.reduce((s,i)=>s+(i.price*i.qty),0) + labor + transportFee;
+            
+            await updateDoc(doc(db,'artifacts',appId,'public','data','repairs',state.activeRepairId), {
+                diagnosis:f.diagnosis.value, parts, laborCost:labor, transportFee, cost:total, status:f.status.value
+            });
+            state.showRepairProcessModal=false; showToast('已更新');
+            renderApp(); // Force Render
+        };
+        window.addPartRow = () => { 
+            const c=document.getElementById('partsListContainer'); 
+            const d=document.createElement('div'); 
+            d.className='grid grid-cols-12 gap-2 mb-2 items-center part-row'; 
+            d.innerHTML=`<input type="text" list="partOptions" onchange="window.fillPartDetails(this)" placeholder="品名" class="col-span-4 border p-2 rounded text-sm bg-white"><input type="number" placeholder="成本" class="col-span-2 border p-2 rounded text-sm bg-gray-50 text-gray-500 part-cost" readonly><input type="number" placeholder="單價" class="col-span-3 border p-2 rounded text-sm bg-white part-price" oninput="window.calcRepairTotal()"><input type="number" placeholder="量" value="1" class="col-span-2 border p-2 rounded text-sm bg-white part-qty" oninput="window.calcRepairTotal()"><button type="button" onclick="this.parentElement.remove();window.calcRepairTotal()" class="col-span-1 text-red-500 flex justify-center"><i data-lucide="trash-2" class="w-4 h-4"></i></button>`; 
+            c.appendChild(d); lucide.createIcons(); 
+        };
+        window.calcRepairTotal = () => { 
+            let t=0; 
+            document.querySelectorAll('.part-row').forEach(r=>{
+                t+=(Number(r.querySelector('.part-price').value)||0)*(Number(r.querySelector('.part-qty').value)||0)
+            }); 
+            t+=Number(document.getElementById('laborCostInput').value)||0; 
+            const transInput = document.getElementById('transportFeeInput');
+            if(transInput && transInput.offsetParent !== null) { // check if visible
+                 t+=Number(transInput.value)||0;
+            }
+            document.getElementById('repairTotalDisplay').innerText=formatMoney(t); 
+        };
+
+        // --- Render Functions (Clean & Unique) ---
+        function renderLogin() {
+             if (state.loginMode === 'select') return `<div class="h-full flex flex-col items-center justify-center p-6 bg-elegant"><div class="w-full max-w-sm text-center"><div class="mb-12 flex justify-center"><div class="flex items-center gap-3 select-none"><div class="text-4xl md:text-5xl font-black logo-text-zh font-serif tracking-wide">羅德精技</div><div class="h-12 w-[2px] logo-divider"></div><div class="flex flex-col justify-between h-12 py-0.5"><div class="text-xl font-bold logo-text-en font-serif leading-none tracking-tight">Road Machinery</div><div class="text-sm font-bold logo-text-en leading-none w-full flex justify-between"><span>專</span><span>業</span><span>‧</span><span>服</span><span>務</span><span>‧</span><span>品</span><span>質</span></div></div></div></div><div class="space-y-4"><button onclick="window.setLoginMode('client')" class="w-full bg-white hover:bg-slate-50 border-2 border-slate-100 p-5 rounded-2xl flex items-center shadow-lg hover:shadow-xl transition-all group"><div class="w-12 h-12 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mr-4 group-hover:scale-110 transition-transform"><i data-lucide="stethoscope" class="w-6 h-6"></i></div><div class="text-left"><span class="block text-slate-400 text-xs font-bold uppercase tracking-wider">For Clients</span><span class="text-xl font-bold text-slate-800">醫師 / 藥師 訂貨</span></div></button><button onclick="window.setLoginMode('staff')" class="w-full bg-slate-800 hover:bg-slate-900 text-white p-5 rounded-2xl flex items-center shadow-xl hover:shadow-2xl transition-all group border border-slate-700"><div class="w-12 h-12 rounded-full bg-slate-700 text-slate-200 flex items-center justify-center mr-4 group-hover:scale-110 transition-transform"><i data-lucide="shield" class="w-6 h-6"></i></div><div class="text-left"><span class="block text-slate-400 text-xs font-bold uppercase tracking-wider">For Staff</span><span class="text-xl font-bold text-slate-100">內部 / 廠商 登入</span></div></button></div><p class="mt-12 text-slate-400 text-xs font-mono">System Ver 5.2.6</p></div></div>`;
+             return `<div class="h-full flex flex-col items-center justify-center p-6 bg-elegant"><div class="w-full max-w-sm bg-white p-8 rounded-3xl shadow-2xl border border-white/50 backdrop-blur-sm"><button onclick="window.setLoginMode('select')" class="mb-6 text-slate-400 flex items-center hover:text-slate-600 transition-colors"><i data-lucide="arrow-left" class="w-4 h-4 mr-1"></i> 返回選擇</button><h2 class="text-3xl font-bold text-slate-800 mb-2 font-serif">${state.loginMode==='client'?'診所/藥局':'內部管理'}</h2><p class="text-slate-400 text-sm mb-8">請輸入您的帳號資訊以繼續</p><form onsubmit="window.handleLogin(event)" class="space-y-5"><div class="space-y-1"><label class="text-xs font-bold text-slate-500 ml-1">帳號 / 電話</label><input name="username" class="w-full p-4 border border-slate-200 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all font-medium"></div><div class="space-y-1"><label class="text-xs font-bold text-slate-500 ml-1">密碼</label><input name="password" type="password" class="w-full p-4 border border-slate-200 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all font-medium"></div><button ${state.isLoading?'disabled':''} class="w-full btn-noble text-white p-4 rounded-xl font-bold text-lg shadow-lg hover:shadow-xl active:scale-[0.98] transition-all flex items-center justify-center">${state.isLoading?'連線中...':'登入系統'} <i data-lucide="arrow-right" class="ml-2 w-5 h-5"></i></button></form><div class="mt-8 pt-6 border-t border-slate-100 text-center"><p class="text-slate-400 text-sm mb-2">還沒有帳號？</p><button onclick="window.openRegisterModal('${state.loginMode}')" class="text-blue-600 font-bold hover:underline">立即註冊帳號</button></div></div></div>`;
+        }
+
+        function renderRegisterModal() {
+            if (!state.showRegisterModal) return '';
+            const roleTitle = state.registerRole === 'client' ? '診所/藥局' : '供應商';
+            return `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4"><div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-fade-in max-h-[90vh] overflow-y-auto custom-scrollbar mobile-modal"><div class="p-5 border-b border-gray-100 bg-blue-50 flex justify-between items-center sticky top-0 bg-white z-10"><h3 class="font-bold text-lg text-gray-800">${roleTitle} 註冊</h3><button onclick="window.closeRegisterModal()" class="text-gray-400 hover:text-gray-600"><i data-lucide="x" class="w-5 h-5"></i></button></div><form onsubmit="window.handleRegister(event)" class="p-6 space-y-4"><div><label class="block text-sm font-medium text-gray-700 mb-1">${roleTitle}名稱 (即登入帳號)</label><input name="registerName" type="text" required class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><div><label class="block text-sm font-medium text-gray-700 mb-1">聯絡電話</label><input name="phone" type="tel" required class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><div class="grid grid-cols-2 gap-2"><div><label class="block text-sm font-medium text-gray-700 mb-1">縣市</label><select name="city" class="w-full border border-gray-300 rounded-lg p-2 outline-none bg-white"><option value="">選擇縣市</option>${TAIWAN_CITIES.map(c => `<option value="${c}">${c}</option>`).join('')}</select></div><div><label class="block text-sm font-medium text-gray-700 mb-1">類型</label><select name="type" class="w-full border border-gray-300 rounded-lg p-2 outline-none bg-white"><option value="clinic" ${state.registerRole==='client'?'selected':''}>診所</option><option value="pharmacy">藥局</option><option value="hospital">醫院</option><option value="supplier" ${state.registerRole==='supplier'?'selected':''}>供應商</option><option value="other">其他</option></select></div></div><div><label class="block text-sm font-medium text-gray-700 mb-1">地址</label><input name="address" type="text" class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><div><label class="block text-sm font-medium text-gray-700 mb-1">密碼</label><input name="password" type="password" required class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><div><label class="block text-sm font-medium text-gray-700 mb-1">確認密碼</label><input name="confirmPassword" type="password" required class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><button type="submit" class="w-full py-3 bg-blue-600 text-white hover:bg-blue-700 rounded-lg font-bold shadow-md">註冊並登入</button></form></div></div>`;
+        }
+
+        function renderProfileModal() {
+            if (!state.showProfileModal || !state.currentUser) return '';
+            const u = state.currentUser;
+            const isAdmin = state.currentUser.role === 'admin';
+            return `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4"><div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-fade-in max-h-[90vh] overflow-y-auto mobile-modal"><div class="p-5 border-b border-gray-100 bg-slate-50 flex justify-between items-center"><h3 class="font-bold text-lg text-gray-800">個人資料管理</h3><button onclick="window.closeProfileModal()" class="text-gray-400 hover:text-gray-600"><i data-lucide="x" class="w-5 h-5"></i></button></div><form onsubmit="window.saveProfile(event)" class="p-6 space-y-4"><div><label class="block text-sm font-medium text-gray-500 mb-1">名稱 (帳號)</label><input type="text" value="${u.username}" disabled class="w-full border border-gray-200 bg-gray-50 rounded-lg p-2"></div><div><label class="block text-sm font-medium text-gray-700 mb-1">電話</label><input name="phone" type="tel" value="${u.phone||''}" required class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><div class="grid grid-cols-2 gap-2"><div><label class="block text-sm font-medium text-gray-700 mb-1">縣市</label><select name="city" class="w-full border border-gray-300 rounded-lg p-2"><option value="">未設定</option>${TAIWAN_CITIES.map(c => `<option value="${c}" ${u.city===c?'selected':''}>${c}</option>`).join('')}</select></div><div><label class="block text-sm font-medium text-gray-700 mb-1">類型</label><select name="type" class="w-full border border-gray-300 rounded-lg p-2"><option value="">未設定</option><option value="clinic" ${u.type==='clinic'?'selected':''}>診所</option><option value="pharmacy" ${u.type==='pharmacy'?'selected':''}>藥局</option><option value="hospital" ${u.type==='hospital'?'selected':''}>醫院</option><option value="supplier" ${u.type==='supplier'?'selected':''}>供應商</option></select></div></div>${isAdmin && u.role!=='admin' ? `<div><label class="block text-sm font-medium text-gray-700 mb-1">包藥紙規格偏好</label><select name="preferredPaperSpec" class="w-full border border-gray-300 rounded-lg p-2"><option value="">無限制</option><option value="7cm_folded" ${u.preferredPaperSpec==='7cm_folded'?'selected':''}>7公分對折</option><option value="14cm_unfolded" ${u.preferredPaperSpec==='14cm_unfolded'?'selected':''}>14公分不對折</option></select></div>` : ''}<div><label class="block text-sm font-medium text-gray-700 mb-1">地址</label><input name="address" type="text" value="${u.address||''}" class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><div><label class="block text-sm font-medium text-gray-700 mb-1">備註</label><textarea name="note" rows="2" class="w-full border border-gray-300 rounded-lg p-2 outline-none">${u.note||''}</textarea></div><div class="pt-2 border-t border-gray-100"><label class="block text-sm font-medium text-gray-700 mb-1">重設密碼 (留空不修改)</label><input name="password" type="password" class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><button type="submit" class="w-full py-2 bg-slate-800 text-white hover:bg-slate-900 rounded-lg font-bold shadow-md">儲存變更</button></form></div></div>`;
+        }
+
+        function renderSidebar() {
+            const isAdmin = state.currentUser?.role === 'admin';
+            const isSupplier = state.currentUser?.role === 'supplier';
+            let menuItems = [], roleName = state.currentUser?.name || '訪客', roleIcon = 'user';
+            
+            if (isAdmin) { 
+                const pendingRepairs = state.repairs.filter(r => r.status === 'pending' || r.status === 'processing').length;
+                menuItems = [
+                    { id: 'dashboard', icon: 'layout-dashboard', label: '營運', badge: pendingRepairs }, 
+                    { id: 'orders', icon: 'file-text', label: '訂單管理' }, 
+                    { id: 'products', icon: 'package', label: '產品管理' }, 
+                    { id: 'repair_admin', icon: 'wrench', label: '報修案件' }, 
+                    { id: 'repair_history', icon: 'history', label: '報修記錄' },
+                    { id: 'crm', icon: 'users', label: '聯絡資訊' },
+                    { id: 'expenses', icon: 'receipt', label: '支出' },
+                    { id: 'users', icon: 'users', label: '帳號' }
+                ]; 
+            } else if (isSupplier) { 
+                menuItems = [{ id: 'products', icon: 'package', label: '產品' }]; 
+            } else { 
+                menuItems = [
+                    { id: 'shop', icon: 'store', label: '採購' }, 
+                    { id: 'repair_client', icon: 'wrench', label: '維修' }, 
+                    { id: 'orders', icon: 'history', label: '訂購紀錄' },
+                    { id: 'contact', icon: 'phone', label: '聯繫我們' }
+                ]; 
+            }
+            return `<div class="hidden md:flex w-64 flex-col bg-white border-r border-slate-200 h-full"><div class="p-6 border-b border-slate-100"><div class="flex items-center gap-2 select-none"><div class="text-2xl font-black logo-text-zh font-serif tracking-wide whitespace-nowrap">羅德精技</div><div class="h-8 w-[1.5px] logo-divider"></div><div class="flex flex-col justify-center h-8"><div class="text-[10px] font-bold logo-text-en font-serif leading-none mb-1">Road Machinery</div><div class="text-[8px] font-bold logo-text-en leading-none w-full flex justify-between"><span>專</span><span>業</span><span>‧</span><span>服</span><span>務</span><span>‧</span><span>品</span><span>質</span></div></div></div></div><nav class="flex-1 p-4 space-y-1 overflow-y-auto">${menuItems.map(i => `<button onclick="window.setView('${i.id}')" class="w-full flex items-center justify-between p-3 rounded-xl transition-all ${state.currentView===i.id?'bg-blue-50 text-blue-700 font-bold':'text-slate-500 hover:bg-slate-50'}"><div class="flex items-center"><i data-lucide="${i.icon}" class="w-5 h-5 mr-3"></i>${i.label}</div>${i.badge>0 ? `<span class="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">${i.badge}</span>` : ''}</button>`).join('')}</nav><div class="p-4 border-t border-slate-100"><div class="flex items-center gap-3 mb-4 px-2"><div class="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-600">${state.currentUser.name[0]}</div><div class="flex-1 min-w-0"><p class="text-sm font-bold text-slate-700 truncate">${state.currentUser.name}</p></div></div><div class="space-y-2"><button onclick="window.openModal('profile')" class="w-full py-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-500 hover:bg-slate-50">個人資料</button><button onclick="window.logout()" class="w-full py-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-500 hover:bg-slate-50">登出</button></div></div></div><div class="md:hidden fixed bottom-0 w-full bg-white border-t border-slate-200 flex justify-around py-2 px-1 z-40 pb-safe">${menuItems.slice(0,5).map(i => `<button onclick="window.setView('${i.id}')" class="flex flex-col items-center p-2 min-w-[60px] ${state.currentView===i.id?'text-blue-600':'text-slate-400'}"><div class="relative"><i data-lucide="${i.icon}" class="w-6 h-6 mb-1 ${state.currentView===i.id?'fill-current/10':''}"></i>${i.badge>0 ? `<span class="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white"></span>`:''}</div><span class="text-[10px] font-medium">${i.label}</span></button>`).join('')}</div>`;
+        }
+
+        function renderProductList() {
+            const isSupplier = state.currentUser.role === 'supplier';
+            const products = isSupplier ? state.products.filter(p => p.supplierName === state.currentUser.name) : state.products;
+            return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col"><div class="flex justify-between items-center mb-6"><h2 class="text-2xl font-bold text-slate-800">產品管理</h2><button onclick="window.openProductModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center shadow-sm"><i data-lucide="plus" class="w-4 h-4 mr-2"></i> 新增產品</button></div><div class="bg-white rounded-xl shadow-sm border border-slate-200 flex-1 overflow-hidden flex flex-col"><div class="overflow-x-auto custom-scrollbar flex-1"><table class="w-full text-left text-sm"><thead class="bg-slate-50 text-slate-600 border-b border-slate-200 sticky top-0 z-10"><tr><th class="p-4">圖片</th><th class="p-4">型號 / 規格</th><th class="p-4">供應商</th><th class="p-4">類別</th><th class="p-4 text-right">成本</th><th class="p-4 text-right">售價(含稅)</th><th class="p-4 text-center">庫存</th><th class="p-4 text-center">操作</th></tr></thead><tbody class="divide-y divide-slate-100">${products.map(p => `<tr class="hover:bg-slate-50"><td class="p-4"><div class="w-10 h-10 rounded bg-slate-100 flex items-center justify-center overflow-hidden border border-slate-200">${p.imageUrl ? `<img src="${p.imageUrl}" class="w-full h-full object-cover">` : `<i data-lucide="box" class="w-5 h-5 text-slate-300"></i>`}</div></td><td class="p-4"><div class="font-bold text-slate-800">${p.name}</div><div class="text-xs text-slate-400">${p.spec || ''}</div></td><td class="p-4 text-slate-600 font-medium">${p.supplierName || '自有'}</td><td class="p-4"><span class="px-2 py-1 rounded-full bg-slate-100 text-xs text-slate-600">${CAT_MAP[p.category] || p.category}</span></td><td class="p-4 text-right text-slate-500">${formatMoney(p.cost)}</td><td class="p-4 text-right font-bold text-slate-700">${formatMoney(p.priceAfterTax)}</td><td class="p-4 text-center"><span class="${p.stock < (p.safeStock||5) ? 'text-red-500 font-bold' : 'text-slate-600'}">${p.stock}</span></td><td class="p-4 text-center"><div class="flex items-center justify-center gap-2"><button onclick="window.openProductModal('${p.id}')" class="text-blue-600 hover:bg-blue-50 p-2 rounded"><i data-lucide="edit-2" class="w-4 h-4"></i></button><button onclick="window.deleteProduct(event, '${p.docId}')" class="text-red-600 hover:bg-red-50 p-2 rounded transition-colors"><i data-lucide="trash-2" class="w-4 h-4"></i></button></div></td></tr>`).join('')}${products.length === 0 ? '<tr><td colspan="8" class="p-8 text-center text-slate-400">目前沒有產品</td></tr>' : ''}</tbody></table></div></div></div>`;
+        }
+
+        function renderOrders() {
+            const isAdmin = state.currentUser.role === 'admin';
+            let orders = isAdmin ? state.orders : state.orders.filter(o => o.clientId === state.currentUser.username);
+            if (isAdmin && state.orderFilter !== 'all') {
+                if(state.orderFilter === 'pending') orders = orders.filter(o => o.status === 'pending');
+                else if(state.orderFilter === 'unpaid') orders = orders.filter(o => o.paymentStatus === 'unpaid');
+            }
+            if (state.orderSearch) {
+                const term = state.orderSearch.toLowerCase();
+                orders = orders.filter(o => 
+                    o.id.toLowerCase().includes(term) || 
+                    o.clientName.toLowerCase().includes(term) ||
+                    o.items.some(i => 
+                        i.name.toLowerCase().includes(term) || 
+                        (i.category && CAT_MAP[i.category] && CAT_MAP[i.category].includes(term)) ||
+                        (i.supplierName && i.supplierName.toLowerCase().includes(term)) ||
+                        (i.spec && i.spec.toLowerCase().includes(term))
+                    )
+                );
+            }
+
+            return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col"><div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6"><h2 class="text-2xl font-bold text-slate-800">訂單管理</h2>${isAdmin ? `<div class="flex items-center gap-2 bg-white p-1 rounded-lg border border-slate-200 shadow-sm"><button onclick="window.setView('orders','all')" class="px-3 py-1 rounded-md text-sm font-medium transition-colors ${state.orderFilter==='all'?'bg-slate-800 text-white':'text-slate-500 hover:bg-slate-50'}">全部</button><button onclick="window.setView('orders','pending')" class="px-3 py-1 rounded-md text-sm font-medium transition-colors ${state.orderFilter==='pending'?'bg-slate-800 text-white':'text-slate-500 hover:bg-slate-50'}">待出貨</button><button onclick="window.setView('orders','unpaid')" class="px-3 py-1 rounded-md text-sm font-medium transition-colors ${state.orderFilter==='unpaid'?'bg-slate-800 text-white':'text-slate-500 hover:bg-slate-50'}">未收款</button></div>` : ''}</div>${isAdmin ? `<div class="mb-4 flex gap-2"><input type="text" oninput="window.setOrderSearch(this.value)" placeholder="搜尋訂單、客戶、產品、供應商..." class="border border-slate-300 rounded-lg px-4 py-2 text-sm w-full md:w-96"><button onclick="window.openAdminOrderModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow hover:bg-blue-700 flex-shrink-0">代客下單</button></div>` : ''}<div class="bg-white rounded-xl shadow-sm border border-slate-200 flex-1 overflow-hidden flex flex-col"><div class="overflow-x-auto custom-scrollbar flex-1"><table class="w-full text-left text-sm"><thead class="bg-slate-50 text-slate-600 border-b border-slate-200 sticky top-0 z-10"><tr><th class="p-4">訂單號</th><th class="p-4">日期</th>${isAdmin ? '<th class="p-4">客戶</th>' : ''}<th class="p-4">產品類別</th><th class="p-4">規格 / 型號</th><th class="p-4 text-right">金額</th><th class="p-4 text-center">狀態</th><th class="p-4 text-center">付款</th>${isAdmin ? '<th class="p-4 text-center">操作</th>' : ''}</tr></thead><tbody class="divide-y divide-slate-100">${orders.map(o => {
+                const firstItem = o.items[0];
+                const product = state.products.find(p => p.id === firstItem.productId.replace('_printed',''));
+                const category = firstItem.category ? CAT_MAP[firstItem.category] : (product ? CAT_MAP[product.category] : '-');
+                const spec = firstItem.spec || (product ? (product.spec||product.name) : firstItem.name);
+                return `<tr class="hover:bg-slate-50 group"><td class="p-4 font-mono text-slate-500 text-xs">${o.id}</td><td class="p-4 text-slate-500">${o.date}</td>${isAdmin ? `<td class="p-4 font-bold text-slate-800">${o.clientName}</td>` : ''}<td class="p-4 text-slate-600 font-medium">${category}</td><td class="p-4 text-slate-600"><div class="truncate max-w-[150px]">${spec}</div>${o.items.length>1?` <span class="text-xs bg-gray-100 rounded px-1">+${o.items.length-1}</span>`:''}${o.orderNote ? `<div class="text-xs text-orange-500 mt-1"><i data-lucide="message-square" class="w-3 h-3 inline mr-1"></i>${o.orderNote}</div>` : ''}</td><td class="p-4 text-right font-bold text-slate-700">${formatMoney(o.totalAmount)}</td><td class="p-4 text-center"><span class="px-2 py-1 rounded text-xs font-bold ${o.status==='completed'?'bg-emerald-100 text-emerald-700':'bg-yellow-100 text-yellow-700'}">${o.status==='completed'?'已出貨':'待出貨'}</span></td><td class="p-4 text-center"><span class="px-2 py-1 rounded text-xs font-bold ${o.paymentStatus==='paid'?'bg-blue-100 text-blue-700':'bg-red-100 text-red-700'}">${o.paymentStatus==='paid'?'已付款':'未付款'}</span></td>${isAdmin ? `<td class="p-4 text-center"><div class="flex items-center justify-center gap-2">${o.status !== 'completed' ? `<button onclick="window.openShipmentModal('${o.docId}')" class="bg-slate-800 text-white px-2 py-1 rounded text-xs hover:bg-slate-900">出貨</button>` : ''}${o.paymentStatus !== 'paid' ? `<button onclick="window.openPaymentModal('${o.docId}')" class="bg-blue-600 text-white px-2 py-1 rounded text-xs hover:bg-blue-700">入帳</button>` : ''}<button onclick="window.deleteOrder(event, '${o.docId}')" class="bg-red-50 text-red-600 p-1.5 rounded hover:bg-red-100 border border-red-200" title="刪除訂單"><i data-lucide="trash-2" class="w-4 h-4"></i></button></div></td>` : ''}</tr>`;
+            }).join('')}${orders.length === 0 ? `<tr><td colspan="${isAdmin?9:7}" class="p-8 text-center text-slate-400">沒有符合的訂單</td></tr>` : ''}</tbody></table></div></div></div>`;
+        }
+
+        function renderAdminOrderModal() {
+            if(!state.showAdminOrderModal) return '';
+            const allClients = state.users.filter(u => u.role === 'client');
+            let filteredClients = allClients;
+            if(state.adminOrderFilters.clientCity) filteredClients = filteredClients.filter(c => c.city === state.adminOrderFilters.clientCity);
+            if(state.adminOrderFilters.clientSearch) { const term = state.adminOrderFilters.clientSearch.toLowerCase(); filteredClients = filteredClients.filter(c => c.name.toLowerCase().includes(term) || c.phone.includes(term)); }
+            
+            const categories = [...new Set(state.products.map(p => p.category))];
+            let availableSuppliers = []; if(state.adminOrderFilters.prodCategory) availableSuppliers = [...new Set(state.products.filter(p => p.category === state.adminOrderFilters.prodCategory).map(p => p.supplierName || '自有'))];
+            let filteredProducts = []; if(state.adminOrderFilters.prodCategory && state.adminOrderFilters.prodSupplier) filteredProducts = state.products.filter(p => p.category === state.adminOrderFilters.prodCategory && (p.supplierName || '自有') === state.adminOrderFilters.prodSupplier);
+            const total = state.adminOrderDraft.items.reduce((s,i) => s + i.price * i.qty, 0);
+
+            return `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4"><div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden animate-fade-in flex flex-col max-h-[95vh]"><div class="p-5 border-b bg-gray-50 flex justify-between items-center"><h3 class="font-bold text-lg text-slate-800">代客下單 (Valet Ordering)</h3><button onclick="window.closeAdminOrderModal()" class="text-gray-400 hover:text-gray-600"><i data-lucide="x" class="w-6 h-6"></i></button></div><div class="p-6 overflow-y-auto flex-1 custom-scrollbar"><div class="mb-6 bg-slate-50 p-4 rounded-lg border border-slate-200"><label class="block text-sm font-bold text-slate-700 mb-3"><span class="bg-blue-600 text-white rounded-full w-5 h-5 inline-flex items-center justify-center text-xs mr-2">1</span>選擇客戶</label><div class="grid grid-cols-2 gap-3 mb-3"><div><label class="text-xs text-slate-500 mb-1 block">縣市篩選</label><select onchange="window.setAdminClientFilter('clientCity', this.value)" class="w-full border p-2 rounded text-sm"><option value="">全部縣市</option>${TAIWAN_CITIES.map(c => `<option value="${c}" ${state.adminOrderFilters.clientCity===c?'selected':''}>${c}</option>`).join('')}</select></div><div><label class="text-xs text-slate-500 mb-1 block">關鍵字搜尋</label><input type="text" oninput="window.setAdminClientFilter('clientSearch', this.value)" value="${state.adminOrderFilters.clientSearch}" placeholder="名稱/電話..." class="w-full border p-2 rounded text-sm"></div></div><select onchange="window.setAdminOrderClient(this.value)" class="w-full border p-2 rounded-lg bg-white font-bold text-slate-700"><option value="">-- 請選擇客戶 (${filteredClients.length}) --</option>${filteredClients.map(c => `<option value="${c.id}" ${state.adminOrderDraft.clientId===c.id?'selected':''}>${c.name} (${c.city}) - ${c.phone}</option>`).join('')}</select></div><div class="mb-6 bg-slate-50 p-4 rounded-lg border border-slate-200"><label class="block text-sm font-bold text-slate-700 mb-3"><span class="bg-blue-600 text-white rounded-full w-5 h-5 inline-flex items-center justify-center text-xs mr-2">2</span>加入商品</label><div class="grid grid-cols-2 gap-3 mb-3"><div><label class="text-xs text-slate-500 mb-1 block">A. 產品類別</label><select onchange="window.setAdminProductFilter('prodCategory', this.value)" class="w-full border p-2 rounded text-sm"><option value="">-- 選擇類別 --</option>${categories.map(c => `<option value="${c}" ${state.adminOrderFilters.prodCategory===c?'selected':''}>${CAT_MAP[c]||c}</option>`).join('')}</select></div><div><label class="text-xs text-slate-500 mb-1 block">B. 供應商</label><select onchange="window.setAdminProductFilter('prodSupplier', this.value)" class="w-full border p-2 rounded text-sm" ${!state.adminOrderFilters.prodCategory?'disabled':''}><option value="">-- 先選類別 --</option>${availableSuppliers.map(s => `<option value="${s}" ${state.adminOrderFilters.prodSupplier===s?'selected':''}>${s}</option>`).join('')}</select></div></div><div class="flex gap-2 items-end"><div class="flex-1"><label class="text-xs text-slate-500 mb-1 block">C. 規格 / 型號</label><select onchange="window.setAdminProductFilter('prodId', this.value)" class="w-full border p-2 rounded text-sm font-bold" ${!state.adminOrderFilters.prodSupplier?'disabled':''}><option value="">-- 請選擇產品 --</option>${filteredProducts.map(p => { let unit = (p.category === 'paper' && p.rollsPerBox) ? `(箱/${p.rollsPerBox}捲)` : ''; return `<option value="${p.id}" ${state.adminOrderFilters.prodId===p.id?'selected':''}>${p.name}${unit} - $${p.priceAfterTax}</option>`; }).join('')}</select></div><div class="flex flex-col w-32"><label class="text-xs text-slate-500 mb-1 block">數量</label><div class="flex items-center"><button type="button" onclick="window.adjustAdminQty(-1)" class="bg-gray-200 px-3 py-2 rounded-l hover:bg-gray-300 font-bold border border-gray-300">-</button><input type="number" id="adminOrderQty" value="1" min="1" class="w-full border-y border-gray-300 p-2 text-center text-sm font-bold outline-none h-[42px]" readonly><button type="button" onclick="window.adjustAdminQty(1)" class="bg-gray-200 px-3 py-2 rounded-r hover:bg-gray-300 font-bold border border-gray-300">+</button></div></div><button onclick="window.addAdminOrderItem()" class="bg-blue-600 text-white px-4 py-2 rounded shadow hover:bg-blue-700 font-bold h-[42px] flex items-center ml-2 min-w-[60px] justify-center">確定</button></div></div><div><label class="block text-sm font-bold text-slate-700 mb-2"><span class="bg-blue-600 text-white rounded-full w-5 h-5 inline-flex items-center justify-center text-xs mr-2">3</span>訂單內容</label><div class="bg-white rounded-lg border border-slate-200 overflow-hidden"><table class="w-full text-sm text-left"><thead class="bg-slate-100 text-slate-600"><tr><th class="p-3">品項</th><th class="p-3 text-right">單價</th><th class="p-3 text-center">數量</th><th class="p-3 text-right">小計</th><th class="p-3"></th></tr></thead><tbody>${state.adminOrderDraft.items.map((item, idx) => `<tr class="border-b border-slate-100"><td class="p-3 font-medium"><div class="text-slate-800">${item.name}</div><div class="text-xs text-slate-400">${CAT_MAP[item.category]||'-'}</div></td><td class="p-3 text-right text-slate-500">${formatMoney(item.price)}</td><td class="p-3 text-center font-bold">${item.qty}</td><td class="p-3 text-right font-bold text-slate-800">${formatMoney(item.price*item.qty)}</td><td class="p-3 text-right"><button onclick="window.removeAdminOrderItem(${idx})" class="text-red-500 hover:text-red-700"><i data-lucide="trash-2" class="w-4 h-4"></i></button></td></tr>`).join('')}${state.adminOrderDraft.items.length===0?'<tr><td colspan="5" class="p-4 text-center text-slate-400 italic">尚未加入商品</td></tr>':''}</tbody><tfoot class="bg-slate-50 font-bold text-slate-800"><tr><td colspan="3" class="p-3 text-right">總金額</td><td class="p-3 text-right text-lg text-blue-600">${formatMoney(total)}</td><td></td></tr></tfoot></table></div></div></div><div class="p-4 border-t bg-gray-50"><button type="button" onclick="window.submitAdminOrder()" class="w-full bg-slate-800 text-white py-3 rounded-lg font-bold shadow-lg hover:bg-slate-900 flex justify-center items-center"><i data-lucide="check-circle" class="w-5 h-5 mr-2"></i> 確認建立訂單</button></div></div></div>`;
+        }
+
+        function renderUserManagement() { 
+            return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col"><h2 class="text-2xl font-bold text-gray-800 mb-6">帳號權限管理</h2><div class="bg-white rounded-xl shadow-sm border border-gray-200 flex-1 overflow-hidden flex flex-col"><div class="overflow-x-auto custom-scrollbar flex-1"><table class="w-full text-left text-sm"><thead class="bg-gray-50 text-gray-500 sticky top-0 z-10"><tr><th class="p-4">帳號</th><th class="p-4">身分</th><th class="p-4">操作</th></tr></thead><tbody>${state.users.map(u=>`<tr><td class="p-4 font-bold">${u.name}</td><td class="p-4"><span class="px-2 py-1 rounded text-xs font-bold ${u.role==='admin'?'bg-purple-100 text-purple-700':'bg-slate-100 text-slate-600'}">${u.role==='admin'?'管理員':(u.role==='supplier'?'供應商':'診所/客戶')}</span></td><td class="p-4 flex gap-2"><button onclick="window.toggleAdmin(event, '${u.docId}')" class="text-blue-600 hover:underline text-xs bg-blue-50 px-2 py-1 rounded transition-colors">${u.role==='admin'?'取消管理員':'設為管理員'}</button><button onclick="window.deleteUser(event, '${u.docId}')" class="text-red-600 hover:underline text-xs bg-red-50 px-2 py-1 rounded transition-colors">刪除</button></td></tr>`).join('')}</tbody></table></div></div></div>`; 
+        }
+
+        function renderContact() {
+            const lineId = 'd9365003';
+            const lineUrl = `https://line.me/ti/p/~${lineId}`;
+            const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(lineUrl)}`;
+            return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col items-center justify-center overflow-y-auto"><div class="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full text-center space-y-6 my-auto"><div class="w-20 h-20 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto"><i data-lucide="headset" class="w-10 h-10"></i></div><h2 class="text-2xl font-bold text-slate-800">聯繫我們</h2><p class="text-slate-500">有任何問題？隨時與我們聯繫！</p><div class="space-y-4 pt-4"><a href="tel:0972878517" class="flex items-center justify-center p-4 bg-slate-50 rounded-xl hover:bg-slate-100 transition-colors"><i data-lucide="phone" class="w-6 h-6 text-slate-700 mr-3"></i><span class="font-bold text-lg text-slate-800">0972-878-517</span></a><div class="border-t border-slate-100 pt-4"><a href="${lineUrl}" target="_blank" class="flex items-center justify-center p-4 bg-[#06C755] text-white rounded-xl hover:bg-[#05b64b] transition-colors shadow-lg shadow-green-100 mb-4"><i data-lucide="message-circle" class="w-6 h-6 mr-3"></i><span class="font-bold text-lg">加 LINE 好友</span></a><div class="bg-slate-50 rounded-xl p-4 border border-slate-100"><p class="text-sm text-slate-500 mb-2 font-bold">或掃描 QR Code</p><img src="${qrUrl}" alt="LINE QR Code" class="w-32 h-32 mx-auto rounded-lg bg-white p-1 border border-slate-200 mb-2"><p class="text-xs text-slate-400 font-mono">LINE ID: ${lineId}</p></div></div></div><div class="text-xs text-slate-400 pt-4">服務時間：週一至週五 09:00 - 18:00</div></div></div>`;
+        }
+
+        function renderCRM() {
+            if (state.crmView === 'type') {
+                return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col items-center justify-center"><h2 class="text-2xl font-bold text-slate-800 mb-8">聯絡資訊名錄</h2><div class="grid grid-cols-1 md:grid-cols-2 gap-8 w-full max-w-2xl"><div onclick="window.setCRMView('cities', 'client')" class="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 hover:shadow-lg transition-all cursor-pointer flex flex-col items-center group"><div class="w-20 h-20 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform"><i data-lucide="users" class="w-10 h-10"></i></div><h3 class="text-xl font-bold text-slate-700">客戶名錄</h3><p class="text-slate-400 text-sm mt-2">診所、藥局、醫院</p></div><div onclick="window.setCRMView('list', 'supplier')" class="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 hover:shadow-lg transition-all cursor-pointer flex flex-col items-center group"><div class="w-20 h-20 rounded-full bg-purple-50 text-purple-600 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform"><i data-lucide="truck" class="w-10 h-10"></i></div><h3 class="text-xl font-bold text-slate-700">供應商名錄</h3><p class="text-slate-400 text-sm mt-2">合作廠商資訊</p></div></div></div>`;
+            }
+            const targetRole = state.crmType; 
+            const targets = state.users.filter(u => u.role === targetRole || (targetRole==='client' && (u.type==='clinic'||u.type==='pharmacy'||u.type==='hospital')));
+            const searchFiltered = state.crmSearch ? targets.filter(u => u.name.includes(state.crmSearch) || u.phone.includes(state.crmSearch)) : targets;
+            if (state.crmType === 'client' && state.crmView === 'cities' && !state.crmSearch) {
+                const cityCounts = {};
+                targets.forEach(u => { const c = u.city || '其他'; cityCounts[c] = (cityCounts[c] || 0) + 1; });
+                const sortedCities = Object.entries(cityCounts).sort((a,b) => b[1]-a[1]);
+                return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col"><div class="flex justify-between items-center mb-6"><div class="flex items-center gap-4"><button onclick="window.setCRMView('type')" class="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center hover:bg-slate-50 text-slate-600"><i data-lucide="arrow-left" class="w-5 h-5"></i></button><h2 class="text-2xl font-bold text-slate-800">客戶分佈 (按縣市)</h2></div><div class="relative"><i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i><input type="text" oninput="window.setCRMSearch(this.value)" placeholder="搜尋客戶..." class="pl-9 pr-4 py-2 border rounded-lg text-sm w-48 focus:w-64 transition-all"></div></div><div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">${sortedCities.map(([city, count]) => `<div onclick="window.setCRMView('list', 'client', '${city}')" class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 hover:shadow-md transition-all cursor-pointer group"><div class="flex justify-between items-start mb-4"><div class="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 group-hover:bg-blue-50 group-hover:text-blue-600"><i data-lucide="map-pin" class="w-6 h-6"></i></div><span class="text-3xl font-bold text-slate-800">${count}</span></div><h3 class="text-xl font-bold text-slate-700">${city}</h3><p class="text-sm text-slate-400 mt-1">點擊查看列表 <i data-lucide="arrow-right" class="w-3 h-3 inline"></i></p></div>`).join('')}</div></div>`;
+            }
+            const displayList = (state.crmType === 'client' && !state.crmSearch) ? searchFiltered.filter(u => (u.city || '其他') === state.activeCity) : searchFiltered;
+            const backView = state.crmType === 'client' && !state.crmSearch ? 'cities' : 'type';
+            const title = state.crmSearch ? `搜尋結果: "${state.crmSearch}"` : (state.crmType==='supplier' ? '供應商名錄' : `${state.activeCity} 客戶名錄`);
+            return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col"><div class="flex justify-between items-center mb-6"><div class="flex items-center gap-4"><button onclick="window.setCRMView('${backView}', '${state.crmType}')" class="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center hover:bg-slate-50 text-slate-600"><i data-lucide="arrow-left" class="w-5 h-5"></i></button><h2 class="text-2xl font-bold text-slate-800">${title}</h2></div><div class="relative"><i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i><input type="text" oninput="window.setCRMSearch(this.value)" value="${state.crmSearch}" placeholder="搜尋..." class="pl-9 pr-4 py-2 border rounded-lg text-sm w-48 focus:w-64 transition-all"></div></div><div class="bg-white rounded-xl shadow-sm border border-slate-200 flex-1 overflow-hidden flex flex-col"><div class="overflow-x-auto custom-scrollbar flex-1"><table class="w-full text-left text-sm"><thead class="bg-slate-50 text-slate-600 border-b border-slate-200"><tr><th class="p-4">名稱</th><th class="p-4">類型</th><th class="p-4">聯絡電話</th><th class="p-4">詳細地址</th><th class="p-4">備註</th><th class="p-4">操作</th></tr></thead><tbody class="divide-y divide-slate-100">${displayList.map(u => `<tr class="hover:bg-slate-50 cursor-pointer" onclick="window.openClientHistory('${u.docId}')"><td class="p-4 font-bold text-slate-800">${u.name}</td><td class="p-4"><span class="px-2 py-1 rounded-full bg-slate-100 text-xs font-bold text-slate-600">${u.type || '-'}</span></td><td class="p-4 font-mono text-slate-600">${u.phone}</td><td class="p-4 text-slate-600">${u.address || '-'}</td><td class="p-4 text-slate-500 italic text-xs">${u.note || '-'}</td><td class="p-4"><button onclick="event.stopPropagation(); window.openClientHistory('${u.docId}')" class="text-blue-600 text-xs bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded border border-blue-200 flex items-center gap-1"><i data-lucide="history" class="w-3 h-3"></i> 查看記錄</button></td></tr>`).join('')}</tbody></table></div></div></div>`;
+        }
+
+        function renderClientRepair() {
+            const myRepairs = state.repairs.filter(r => r.clientId === state.currentUser.username);
+            return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col gap-6"><div class="flex justify-between items-center"><h2 class="text-2xl font-bold text-slate-800">維修服務中心</h2><button onclick="window.openModal('repair')" class="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 flex items-center shadow-lg"><i data-lucide="wrench" class="w-4 h-4 mr-2"></i> 我要叫修</button></div><div class="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 overflow-y-auto custom-scrollbar p-1">${myRepairs.map(r => `<div onclick="window.openModal('clientRepairDetail', '${r.id}')" class="bg-white rounded-xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition-shadow active:scale-[0.98] cursor-pointer"><div class="flex justify-between items-start mb-3"><span class="px-2 py-1 rounded text-xs font-bold ${r.status==='completed'?'bg-emerald-100 text-emerald-700':(r.status==='processing'?'bg-blue-100 text-blue-700':'bg-orange-100 text-orange-700')}">${r.status==='completed'?'已完修':(r.status==='processing'?'維修中':'待處理')}</span><span class="text-xs text-slate-400">${r.date}</span></div><h3 class="font-bold text-slate-800 mb-2">問題描述：</h3><p class="text-sm text-slate-600 mb-4 bg-slate-50 p-3 rounded-lg line-clamp-2">${r.issue}</p>${r.imageUrl?`<div class="mb-4 h-40 bg-slate-100 rounded-lg overflow-hidden border border-slate-200"><img src="${r.imageUrl}" class="w-full h-full object-cover"></div>`:''}${r.status==='completed'?`<div class="pt-4 border-t border-slate-100 mt-2"><div class="flex justify-between text-sm mb-1"><span class="text-slate-500">診斷</span><span class="font-medium text-slate-800">${r.diagnosis||'已修復'}</span></div><div class="flex justify-between text-sm font-bold"><span class="text-slate-500">維修費用</span><span class="text-red-600">${formatMoney(r.cost)}</span></div></div>`:''}</div>`).join('')}${myRepairs.length===0?`<div class="col-span-full text-center py-20 text-slate-400">尚無維修記錄</div>`:''}</div></div>${state.showRepairModal?`<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4" onclick="if(event.target===this)window.closeModal('repair')"><div class="bg-white rounded-xl shadow-2xl w-full max-w-md animate-fade-in p-6 mobile-modal mobile-modal-content"><div class="flex justify-between items-center mb-6"><h3 class="font-bold text-xl text-slate-800">申請維修服務</h3><button onclick="window.closeModal('repair')" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-6 h-6"></i></button></div><form onsubmit="window.submitRepair(event)" class="space-y-4"><div><label class="block text-sm font-medium text-slate-700 mb-1">問題狀況描述</label><textarea name="issue" rows="4" required class="w-full border border-slate-300 rounded-lg p-3 outline-none" placeholder="請詳細描述機器狀況..."></textarea></div><div><label class="block text-sm font-medium text-slate-700 mb-1">上傳照片/影片截圖</label><label class="border-2 border-dashed border-slate-300 rounded-lg p-4 flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 transition-colors text-slate-400"><i data-lucide="image-plus" class="w-8 h-8 mb-2"></i><span class="text-xs">點擊上傳 (自動壓縮)</span><input type="file" accept="image/*" class="hidden" onchange="window.handleImageUpload(this)" data-target="imageUrlInput" data-preview="repairImagePreview"></label><input type="hidden" id="imageUrlInput" name="imageUrl"><img id="repairImagePreview" class="h-40 w-full object-contain mt-2 hidden rounded-lg bg-slate-100 border border-slate-200"></div><button type="submit" class="w-full py-3 bg-red-600 text-white rounded-lg font-bold shadow-lg hover:bg-red-700 mt-4">送出申請</button></form></div></div>`:''}`;
+        }
+
+        function renderClientRepairDetail() { 
+            if(!state.showClientRepairDetail) return ''; 
+            const r = state.activeClientRepair;
+            const partsList = Array.isArray(r.parts) ? r.parts : (r.parts ? [{name: r.parts, qty: 1, price: 0}] : []);
+            return `<div class="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4 animate-fade-in mobile-modal" onclick="if(event.target===this)window.closeModal('ClientRepairDetail')"><div class="bg-white w-full max-w-md rounded-2xl overflow-hidden shadow-2xl mobile-modal-content flex flex-col max-h-full overflow-y-auto"><div class="h-48 bg-slate-100 relative flex-shrink-0">${r.imageUrl ? `<img src="${r.imageUrl}" class="w-full h-full object-cover cursor-pointer" onclick="window.openImagePreview('${r.id}')">` : `<div class="w-full h-full flex items-center justify-center text-slate-300"><i data-lucide="image-off" class="w-12 h-12"></i></div>`}<button onclick="window.closeModal('ClientRepairDetail')" class="absolute top-4 right-4 bg-black/30 hover:bg-black/50 text-white p-1 rounded-full backdrop-blur-md"><i data-lucide="x" class="w-5 h-5"></i></button></div><div class="p-6"><div class="flex justify-between items-start mb-4"><div><h3 class="font-bold text-xl text-slate-800">維修詳情</h3><p class="text-xs text-slate-400">${r.date} • ${r.id.slice(0,8)}</p></div><span class="px-3 py-1 rounded-full text-xs font-bold ${r.status==='completed'?'bg-emerald-100 text-emerald-700':'bg-orange-100 text-orange-700'}">${r.status==='completed'?'已完修':'處理中'}</span></div><div class="space-y-4"><div><div class="chat-bubble chat-bubble-user mb-2"><h4 class="text-xs font-bold opacity-60 mb-1">客戶描述</h4>${r.issue}</div></div>${r.diagnosis ? `<div><div class="chat-bubble chat-bubble-admin"><h4 class="text-xs font-bold opacity-60 mb-1">技師診斷</h4>${r.diagnosis}</div></div>` : ''}${partsList.length > 0 ? `<div class="bg-slate-50 p-3 rounded-lg border border-slate-100"><h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">更換零件與工資</h4><div class="space-y-1 text-sm">${partsList.map(p => `<div class="flex justify-between"><span>${p.name} x${p.qty}</span><span class="font-mono text-slate-600">${p.price>0 ? formatMoney(p.price*p.qty) : '-'}</span></div>`).join('')}${r.laborCost > 0 ? `<div class="flex justify-between pt-1 border-t border-slate-200 mt-1"><span>維修工資</span><span class="font-mono text-slate-600">${formatMoney(r.laborCost)}</span></div>` : ''}${r.transportFee > 0 ? `<div class="flex justify-between pt-1 border-t border-slate-200 mt-1"><span>交通費</span><span class="font-mono text-slate-600">${formatMoney(r.transportFee)}</span></div>` : ''}</div></div>` : ''}${r.cost > 0 ? `<div class="flex justify-between items-center pt-4 border-t mt-4"><span class="text-slate-500 text-sm">維修總費用</span><span class="text-2xl font-bold text-red-600 font-mono">${formatMoney(r.cost)}</span></div>` : ''}</div></div></div></div>`; 
+        }
+
+        function renderShop() {
+            const cartCount = state.cart.reduce((sum, i) => sum + i.qty, 0);
+            if (!state.activeCategory) {
+                const cats = [ 
+                    { id: 'machine', name: '包藥機系列', icon: 'printer', theme: 'border-l-4 border-indigo-500 text-indigo-900', iconColor: 'text-indigo-500' }, 
+                    { id: 'paper', name: '包藥紙卷', icon: 'scroll', theme: 'border-l-4 border-amber-500 text-amber-900', iconColor: 'text-amber-500' }, 
+                    { id: 'medicine_bag', name: '夾鍊藥袋', icon: 'shopping-bag', theme: 'border-l-4 border-emerald-500 text-emerald-900', iconColor: 'text-emerald-500' }, 
+                    { id: 'other', name: '其他商品', icon: 'box', theme: 'border-l-4 border-slate-500 text-slate-900', iconColor: 'text-slate-500' } 
+                ];
+                return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col relative"><div class="flex justify-between items-center mb-8"><div><h2 class="text-2xl font-bold text-slate-800">商品採購</h2><p class="text-slate-500 text-sm mt-1">請選擇您需要的產品類別</p></div><button onclick="window.updateCartModal(true)" class="relative bg-white border border-slate-200 text-slate-600 p-3 rounded-full shadow-sm hover:shadow-md transition-all group"><i data-lucide="shopping-cart" class="w-6 h-6"></i>${cartCount>0?`<span class="absolute -top-1 -right-1 bg-red-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold shadow-sm">${cartCount}</span>`:''}</button></div><div class="category-grid">${cats.map(c => `<div onclick="window.setCategory('${c.id}')" class="category-card-elegant cursor-pointer group ${c.theme}"><div class="z-10"><h3 class="text-xl font-bold mb-1">${c.name}</h3><span class="text-xs opacity-60 font-medium tracking-wider">BROWSE</span></div><div class="self-end mt-4 text-slate-300 group-hover:text-current transition-colors"><i data-lucide="arrow-right" class="w-6 h-6"></i></div><i data-lucide="${c.icon}" class="w-24 h-24 cat-icon-bg ${c.iconColor}"></i></div>`).join('')}</div></div>${renderCartModal()}`;
+            }
+            
+            // Filter by user preference
+            let visible = state.products.filter(p => p.category === state.activeCategory);
+            if (state.activeCategory === 'paper' && state.currentUser.preferredPaperSpec) {
+                visible = visible.filter(p => p.paperSpec === state.currentUser.preferredPaperSpec);
+            }
+
+            const catNameMap = { 'machine': '包藥機系列', 'paper': '包藥紙卷', 'medicine_bag': '夾鍊藥袋', 'other': '其他商品' };
+            return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col relative"><div class="flex justify-between items-center mb-6"><div class="flex items-center gap-4"><button onclick="window.setCategory(null)" class="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center hover:bg-slate-50 text-slate-600 transition-colors shadow-sm"><i data-lucide="arrow-left" class="w-5 h-5"></i></button><h2 class="text-2xl font-bold text-slate-800">${catNameMap[state.activeCategory]}</h2></div><button onclick="window.updateCartModal(true)" class="relative bg-white border border-slate-200 text-slate-600 p-3 rounded-full shadow-sm hover:shadow-md transition-all"><i data-lucide="shopping-cart" class="w-6 h-6"></i>${cartCount>0?`<span class="absolute -top-1 -right-1 bg-red-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold shadow-sm">${cartCount}</span>`:''}</button></div><div class="product-grid pb-20 overflow-y-auto custom-scrollbar p-1">${visible.map(p => {
+                const isPaper = p.category === 'paper';
+                const hasPrinting = isPaper && p.hasPrinting;
+                let displayMinQty = p.minOrderQty || 1;
+                if (isPaper) displayMinQty = (p.paperSpec === '7cm_folded') ? 20 : (p.paperSpec === '14cm_unfolded' ? 8 : 1);
+
+                return `<div class="product-card bg-white rounded-xl border border-slate-200 p-4 flex flex-col h-full hover:border-blue-200 group"><div class="img-container mb-4 group-hover:opacity-90 transition-opacity">${p.imageUrl?`<img src="${p.imageUrl}" class="w-full h-full object-cover">`:`<i data-lucide="${p.imageIcon}" class="w-12 h-12 text-slate-300"></i>`}</div><div class="mb-auto"><h3 class="font-bold text-slate-800 text-lg leading-tight mb-1">${p.name}</h3>${p.spec ? `<p class="text-sm text-slate-500">${p.spec}</p>` : ''}${p.paperSpec ? `<p class="text-xs bg-gray-100 inline-block px-1 rounded text-slate-600 mt-1">${p.paperSpec==='7cm_folded'?'7公分對折':'14公分不對折'}</p>` : ''}</div><div class="mt-4 pt-4 border-t border-slate-100">${hasPrinting ? `<div class="mb-3 p-2 bg-blue-50 rounded border border-blue-100"><label class="flex items-center cursor-pointer"><input type="checkbox" id="print-${p.id}" class="w-4 h-4 text-blue-600 rounded focus:ring-blue-500" onchange="window.togglePrintingOption('${p.id}', this)"><span class="ml-2 text-sm font-bold text-blue-800">需要印刷?</span></label><div class="text-[10px] text-blue-600 mt-1" id="moq-hint-${p.id}"></div></div>` : ''}<div class="flex flex-col gap-3"><div class="flex justify-between items-baseline"><span class="text-xl font-bold text-slate-700 font-mono" id="price-${p.id}">${formatMoney(p.priceAfterTax)}</span><span class="text-[10px] text-slate-400 font-bold" id="moq-${p.id}">MOQ: ${displayMinQty}</span></div><div class="flex items-center gap-2"><div class="flex items-center border rounded-lg bg-slate-50"><button onclick="window.adjustShopQty('${p.id}', -1)" class="px-3 py-1 hover:bg-slate-200 text-slate-600">-</button><input type="number" id="qty-${p.id}" value="${displayMinQty}" min="${displayMinQty}" class="w-12 text-center bg-transparent outline-none text-sm font-bold"><button onclick="window.adjustShopQty('${p.id}', 1)" class="px-3 py-1 hover:bg-slate-200 text-slate-600">+</button></div><button onclick="window.addToCart('${p.id}', 'qty-${p.id}', 'print-${p.id}')" class="flex-1 bg-slate-900 hover:bg-slate-800 text-white py-2 rounded-lg text-sm font-bold shadow-lg transition-transform active:scale-95">我要訂購</button></div></div></div></div>`; }).join('')}</div></div>${renderCartModal()}`;
+        }
+
+        function renderAdminRepairs() {
+            const tickets = state.repairs.filter(r => r.status !== 'completed');
+            const partProducts = state.products.filter(p => p.category === 'parts');
+            
+            const processModal = state.showRepairProcessModal ? (() => {
+                const r = state.repairs.find(x => x.id === state.activeRepairId);
+                const currentParts = Array.isArray(r.parts) ? r.parts : [];
+                return `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4" onclick="if(event.target===this)window.closeRepairProcessModal()"><div class="bg-white rounded-xl shadow-2xl w-full max-w-4xl h-[90vh] flex flex-col md:flex-row overflow-hidden animate-fade-in mobile-modal"><div class="w-full md:w-1/3 bg-slate-50 p-6 border-r border-slate-200 overflow-y-auto"><h3 class="font-bold text-lg mb-4 text-slate-800">叫修內容</h3><div class="mb-4"><span class="text-xs text-slate-500 block">客戶</span><span class="font-bold">${r.clientName}</span></div><div class="mb-4"><span class="text-xs text-slate-500 block">日期</span><span class="font-mono">${r.date}</span></div><div class="mb-4"><span class="text-xs text-slate-500 block">問題描述</span><p class="bg-white p-3 rounded border border-slate-200 text-sm mt-1">${r.issue}</p></div>${r.imageUrl ? `<div class="mt-4"><span class="text-xs text-slate-500 block mb-1">照片/截圖 (點擊放大)</span><div onclick="window.openImagePreview('${r.id}')" class="block group relative rounded-lg overflow-hidden border border-slate-200 cursor-pointer"><img src="${r.imageUrl}" class="w-full h-auto object-cover"><div class="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white"><i data-lucide="zoom-in" class="w-8 h-8"></i></div></div></div>` : ''}</div><div class="flex-1 p-6 overflow-y-auto flex flex-col"><div class="flex justify-between items-center mb-4"><h3 class="font-bold text-xl text-slate-800">處理工單</h3><button onclick="window.closeRepairProcessModal()" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-6 h-6"></i></button></div><form onsubmit="window.processRepair(event)" class="flex-1 flex flex-col space-y-4"><div><label class="block text-sm font-bold text-slate-700 mb-1">技師判定 / 故障原因</label><textarea name="diagnosis" rows="2" class="w-full border border-slate-300 rounded-lg p-2 outline-none" placeholder="請填寫檢修結果...">${r.diagnosis||''}</textarea></div><div class="flex-1 bg-slate-50 rounded-lg p-4 border border-slate-200 flex flex-col"><div class="flex justify-between items-center mb-2"><label class="block text-sm font-bold text-slate-700">更換零件明細</label><button type="button" onclick="window.addPartRow()" class="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700">+ 新增零件</button></div><datalist id="partOptions">${partProducts.map(p => `<option value="${p.name}">`).join('')}</datalist><div id="partsListContainer" class="flex-1 overflow-y-auto min-h-[100px] mb-2">${currentParts.map(p => `<div class="grid grid-cols-12 gap-2 mb-2 items-center part-row"><input type="text" list="partOptions" onchange="window.fillPartDetails(this)" value="${p.name}" placeholder="品名" class="col-span-4 border p-2 rounded text-sm bg-white"><input type="number" value="${p.cost}" placeholder="成本" class="col-span-2 border p-2 rounded text-sm bg-gray-50 text-gray-500 part-cost" readonly><input type="number" value="${p.price}" placeholder="單價" class="col-span-3 border p-2 rounded text-sm bg-white part-price" oninput="window.calcRepairTotal()"><input type="number" value="${p.qty}" placeholder="量" class="col-span-2 border p-2 rounded text-sm bg-white part-qty" oninput="window.calcRepairTotal()"><button type="button" onclick="this.parentElement.remove();window.calcRepairTotal()" class="col-span-1 text-red-500 flex justify-center"><i data-lucide="trash-2" class="w-4 h-4"></i></button></div>`).join('')}</div><div class="grid grid-cols-2 gap-4 border-t border-slate-200 pt-3"><div><label class="block text-xs font-bold text-slate-600 mb-1">維修工資</label><input id="laborCostInput" name="laborCost" type="number" value="${r.laborCost||0}" oninput="window.calcRepairTotal()" class="w-full border border-slate-300 rounded p-2 text-right"></div><div class="text-right"><span class="block text-xs font-bold text-slate-600 mb-1">總計費用</span><span id="repairTotalDisplay" class="text-2xl font-bold text-red-600 font-mono">${formatMoney(r.cost||0)}</span></div></div><div class="mt-2"><label class="flex items-center text-sm font-bold text-slate-700 cursor-pointer"><input type="checkbox" name="hasTransportFee" class="mr-2" onchange="document.getElementById('transportFeeInput').classList.toggle('hidden', !this.checked); window.calcRepairTotal()" ${r.transportFee > 0 ? 'checked' : ''}> 加收交通費</label><input type="number" id="transportFeeInput" name="transportFee" value="${r.transportFee||0}" class="w-full border border-slate-300 rounded p-2 mt-1 ${r.transportFee > 0 ? '' : 'hidden'}" placeholder="請輸入交通費金額" oninput="window.calcRepairTotal()"></div></div><div class="pt-4 border-t border-slate-100"><label class="block text-sm font-bold text-slate-700 mb-2">工單狀態</label><div class="flex gap-4"><label class="flex items-center"><input type="radio" name="status" value="processing" ${r.status==='processing'?'checked':''} class="mr-2"> 維修中 (暫存)</label><label class="flex items-center"><input type="radio" name="status" value="completed" class="mr-2"> 完修 (結案)</label></div></div><button type="submit" class="w-full py-3 bg-slate-800 text-white rounded-lg font-bold shadow-lg hover:bg-slate-900 mt-2">儲存工單</button></form></div></div></div>`;
+            })() : '';
+            return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col"><h2 class="text-2xl font-bold text-slate-800 mb-6">維修工單管理</h2><div class="bg-white rounded-xl shadow-sm border border-slate-200 flex-1 overflow-hidden flex flex-col"><div class="overflow-x-auto custom-scrollbar flex-1"><table class="w-full text-left text-sm"><thead class="bg-slate-50 text-slate-600 border-b border-slate-200"><tr><th class="p-4">日期</th><th class="p-4">客戶名稱</th><th class="p-4 w-1/3">問題描述</th><th class="p-4 text-center">照片</th><th class="p-4 text-center">狀態</th><th class="p-4 text-center">操作</th></tr></thead><tbody class="divide-y divide-slate-100">${tickets.map(r => `<tr class="hover:bg-slate-50"><td class="p-4 font-mono text-slate-500">${r.date}</td><td class="p-4 font-bold text-slate-800">${r.clientName}</td><td class="p-4 text-slate-600"><div class="line-clamp-2">${r.issue}</div></td><td class="p-4 text-center">${r.imageUrl?`<div class="w-10 h-10 rounded bg-slate-100 mx-auto overflow-hidden border border-slate-200 cursor-pointer" onclick="window.openRepairProcessModal('${r.id}')"><img src="${r.imageUrl}" class="w-full h-full object-cover"></div>`:'-'}</td><td class="p-4 text-center"><span class="px-2 py-1 rounded text-xs font-bold ${r.status==='processing'?'bg-blue-100 text-blue-700':'bg-orange-100 text-orange-700'}">${r.status==='processing'?'維修中':'待處理'}</span></td><td class="p-4 text-center"><button onclick="window.openRepairProcessModal('${r.id}')" class="bg-slate-800 text-white px-3 py-1.5 rounded text-xs hover:bg-slate-900 shadow font-bold">處理</button></td></tr>`).join('')}${tickets.length===0?'<tr><td colspan="6" class="p-8 text-center text-slate-400">目前沒有待處理的維修案件</td></tr>':''}</tbody></table></div></div></div>${processModal}`;
+        }
+
+        function renderAdminRepairHistory() {
+            const history = state.repairs.filter(r => r.status === 'completed');
+            return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col"><h2 class="text-2xl font-bold text-slate-800 mb-6">維修歷史記錄</h2><div class="bg-white rounded-xl shadow-sm border border-slate-200 flex-1 overflow-hidden flex flex-col"><div class="overflow-x-auto custom-scrollbar flex-1"><table class="w-full text-left text-sm"><thead class="bg-slate-50 text-slate-600 border-b border-slate-200"><tr><th class="p-4">完修日期</th><th class="p-4">客戶名稱</th><th class="p-4">問題</th><th class="p-4">診斷結果</th><th class="p-4 text-right">費用</th></tr></thead><tbody class="divide-y divide-slate-100">${history.map(r => `<tr class="hover:bg-slate-50"><td class="p-4 font-mono text-slate-500">${r.date}</td><td class="p-4 font-bold text-slate-800">${r.clientName}</td><td class="p-4 text-slate-600 max-w-xs truncate">${r.issue}</td><td class="p-4 text-slate-600 max-w-xs truncate">${r.diagnosis||'-'}</td><td class="p-4 text-right font-bold text-red-600">${formatMoney(r.cost)}</td></tr>`).join('')}${history.length===0?'<tr><td colspan="5" class="p-8 text-center text-slate-400">尚無歷史記錄</td></tr>':''}</tbody></table></div></div></div>`;
+        }
+
+        function renderDashboard() {
+            if (state.dashboardView !== 'main') return renderProfitDetails();
+            const pendingOrders = state.orders.filter(o => o.status === 'pending').length;
+            const unpaidOrders = state.orders.filter(o => o.paymentStatus === 'unpaid').length;
+            const pendingRepairs = state.repairs.filter(r => r.status === 'pending' || r.status === 'processing').length;
+            const currentYear = new Date().getFullYear().toString();
+            let currentYearProfit = 0, totalProfit = 0;
+            state.orders.forEach(o => {
+                if (o.status !== 'completed' || o.paymentStatus !== 'paid') return;
+                const cost = o.items.reduce((sum, i) => sum + (i.cost || 0) * i.qty, 0);
+                const profit = o.totalAmount - cost;
+                if (o.date.startsWith(currentYear)) currentYearProfit += profit;
+                totalProfit += profit;
+            });
+            return `<div class="p-4 md:p-8 animate-fade-in overflow-y-auto h-full"><h2 class="text-2xl font-bold text-gray-800 mb-6">營運儀表板</h2><div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8"><div onclick="window.setView('repair_admin')" class="clickable-card bg-orange-50 p-6 rounded-xl shadow-sm border border-orange-100 cursor-pointer hover:shadow-md transition-shadow"><div class="flex justify-between items-start mb-4"><div><p class="text-sm text-orange-600 font-medium">待處理維修</p><h3 class="text-3xl font-bold text-orange-700 mt-1">${pendingRepairs}</h3></div><div class="p-2 bg-orange-100 rounded-lg text-orange-600"><i data-lucide="wrench" class="w-6 h-6"></i></div></div></div><div onclick="window.setView('orders','pending')" class="clickable-card bg-white p-6 rounded-xl shadow-sm border border-gray-200 cursor-pointer hover:shadow-md transition-shadow"><div class="flex justify-between items-start mb-4"><div><p class="text-sm text-gray-500 font-medium">新訂單</p><h3 class="text-3xl font-bold text-gray-800 mt-1">${pendingOrders}</h3></div><div class="p-2 bg-yellow-100 rounded-lg text-yellow-600"><i data-lucide="clipboard-list" class="w-6 h-6"></i></div></div></div><div onclick="window.setView('orders','unpaid')" class="clickable-card bg-white p-6 rounded-xl shadow-sm border border-gray-200 cursor-pointer hover:shadow-md transition-shadow"><div class="flex justify-between items-start mb-4"><div><p class="text-sm text-gray-500 font-medium">尚未收款</p><h3 class="text-3xl font-bold text-red-600 mt-1">${unpaidOrders}</h3></div><div class="p-2 bg-red-100 rounded-lg text-red-600"><i data-lucide="credit-card" class="w-6 h-6"></i></div></div></div><div class="bg-blue-50 p-6 rounded-xl shadow-sm border border-blue-100 lg:col-span-1"><div class="flex justify-between items-start mb-4"><div><p class="text-sm text-blue-500 font-medium">系統狀態</p><h3 class="text-xl font-bold text-blue-700 mt-2">${isConfigured?'雲端連線中':'未設定資料庫'}</h3></div><div class="p-2 bg-white rounded-lg text-blue-500"><i data-lucide="${isConfigured?'cloud':'cloud-off'}" class="w-6 h-6"></i></div></div></div></div><div class="grid grid-cols-1 md:grid-cols-2 gap-6"><div onclick="window.setDashboardView('profit_year')" class="clickable-card bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex items-center justify-between cursor-pointer hover:shadow-md transition-shadow"><div><p class="text-sm text-gray-500 font-medium">本年度已入帳利潤</p><h3 class="text-3xl font-bold text-emerald-600 mt-1">${formatMoney(currentYearProfit)}</h3><p class="text-xs text-slate-400 mt-2">僅計算已出貨且已收款訂單 <i data-lucide="arrow-right" class="w-3 h-3 inline"></i></p></div><div class="p-2 bg-emerald-50 rounded-lg text-emerald-500"><i data-lucide="trending-up" class="w-6 h-6"></i></div></div><div onclick="window.setDashboardView('profit_all')" class="clickable-card bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex items-center justify-between cursor-pointer hover:shadow-md transition-shadow"><div><p class="text-sm text-gray-500 font-medium">歷年總獲利</p><h3 class="text-3xl font-bold text-blue-600 mt-1">${formatMoney(totalProfit)}</h3><p class="text-xs text-slate-400 mt-2">點擊查看趨勢 <i data-lucide="arrow-right" class="w-3 h-3 inline"></i></p></div><div class="p-2 bg-blue-50 rounded-lg text-blue-500"><i data-lucide="bar-chart-2" class="w-6 h-6"></i></div></div></div></div>`;
+        }
+
+        function renderProfitDetails() {
+            const currentYear = new Date().getFullYear().toString();
+            let content = '';
+            let title = '';
+
+            if (state.dashboardView === 'profit_year') {
+                title = `${currentYear} 年度利潤明細 (已完結)`;
+                const yearOrders = state.orders.filter(o => o.date.startsWith(currentYear) && o.status === 'completed' && o.paymentStatus === 'paid');
+                content = `<table class="w-full text-left text-sm"><thead class="bg-slate-50"><tr><th class="p-4">日期</th><th class="p-4">訂單號</th><th class="p-4">客戶</th><th class="p-4">產品資訊</th><th class="p-4 text-right">營收</th><th class="p-4 text-right">成本(估)</th><th class="p-4 text-right font-bold text-emerald-600">利潤</th></tr></thead><tbody>${yearOrders.map(o => {
+                    const cost = o.items.reduce((sum, i) => sum + (i.cost||0)*i.qty, 0);
+                    const profit = o.totalAmount - cost;
+                    const firstItem = o.items[0] || {};
+                    const catName = CAT_MAP[firstItem.category] || firstItem.category || '-';
+                    const prodInfo = `
+                        <div class="text-xs">
+                            <span class="font-bold text-slate-700">${firstItem.name}</span>
+                            <div class="text-slate-500">
+                                <span class="bg-slate-100 px-1 rounded">${catName}</span>
+                                <span class="ml-1">${firstItem.supplierName || '自有'}</span>
+                                ${firstItem.spec ? `<span class="ml-1 text-slate-400">(${firstItem.spec})</span>` : ''}
+                            </div>
+                            ${o.items.length > 1 ? `<span class="text-[10px] text-slate-400 mt-1 block">...等共 ${o.items.length} 項商品</span>` : ''}
+                        </div>
+                    `;
+                    return `<tr class="border-b border-slate-50 hover:bg-slate-50"><td class="p-4 text-slate-500">${o.date}</td><td class="p-4 font-mono text-xs">${o.id}</td><td class="p-4 font-medium">${o.clientName}</td><td class="p-4">${prodInfo}</td><td class="p-4 text-right">${formatMoney(o.totalAmount)}</td><td class="p-4 text-right text-slate-400">${formatMoney(cost)}</td><td class="p-4 text-right font-bold text-emerald-600">${formatMoney(profit)}</td></tr>`;
+                }).join('')}</tbody></table>`;
+            } else if (state.dashboardView === 'profit_all') {
+                title = "歷年獲利總覽 (已完結)";
+                const years = {};
+                state.orders.forEach(o => {
+                    if (o.status !== 'completed' || o.paymentStatus !== 'paid') return;
+                    const y = o.date.split('-')[0];
+                    const cost = o.items.reduce((sum, i) => sum + (i.cost||0)*i.qty, 0);
+                    const profit = o.totalAmount - cost;
+                    if (!years[y]) years[y] = { revenue: 0, cost: 0, profit: 0 };
+                    years[y].revenue += o.totalAmount;
+                    years[y].cost += cost;
+                    years[y].profit += profit;
+                });
+                const sortedYears = Object.keys(years).sort().reverse();
+                content = `<table class="w-full text-left text-sm"><thead class="bg-slate-50"><tr><th class="p-4">年度</th><th class="p-4 text-right">總營收</th><th class="p-4 text-right">總成本</th><th class="p-4 text-right font-bold text-emerald-600">總利潤</th></tr></thead><tbody>${sortedYears.map(y => `<tr class="border-b border-slate-50 hover:bg-slate-50"><td class="p-4 font-bold text-lg">${y}</td><td class="p-4 text-right">${formatMoney(years[y].revenue)}</td><td class="p-4 text-right text-slate-400">${formatMoney(years[y].cost)}</td><td class="p-4 text-right font-bold text-emerald-600 text-lg">${formatMoney(years[y].profit)}</td></tr>`).join('')}</tbody></table>`;
+            }
+
+            return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col"><div class="flex items-center gap-4 mb-6"><button onclick="window.setDashboardView('main')" class="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center hover:bg-slate-50 text-slate-600"><i data-lucide="arrow-left" class="w-5 h-5"></i></button><h2 class="text-2xl font-bold text-slate-800">${title}</h2></div><div class="bg-white rounded-xl shadow-sm border border-slate-200 flex-1 overflow-hidden flex flex-col"><div class="overflow-x-auto custom-scrollbar flex-1">${content}</div></div></div>`;
+        }
+
+        function renderProductModal() { 
+            if(!state.showProductModal)return''; 
+            const p=state.editingProduct||{}; 
+            const isEdit=!!p.id;
+            const isSupplier = state.currentUser?.role === 'supplier';
+            const supplierReadOnly = isSupplier ? 'readonly class="w-full border border-gray-200 bg-gray-100 text-gray-500 rounded p-2"' : 'class="w-full border p-2 rounded"';
+            const priceReadOnly = isSupplier ? 'disabled' : '';
+            return `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4"><div class="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-fade-in max-h-[90vh] overflow-y-auto mobile-modal"><div class="p-5 border-b bg-gray-50 flex justify-between sticky top-0"><h3 class="font-bold text-lg">${isEdit?'編輯':'新增'}產品</h3><button onclick="window.closeProductModal()">x</button></div><form id="productForm" onsubmit="window.saveProduct(event)" class="p-6 space-y-4"><div><label class="block text-sm">類別</label><select name="category" onchange="window.onCategoryChange()" class="w-full border p-2 rounded"><option value="machine" ${p.category==='machine'?'selected':''}>包藥機</option><option value="paper" ${p.category==='paper'?'selected':''}>包藥紙卷</option><option value="medicine_bag" ${p.category==='medicine_bag'?'selected':''}>夾鍊藥袋</option><option value="parts" ${p.category==='parts'?'selected':''}>零件</option><option value="other" ${p.category==='other'?'selected':''}>其他</option></select></div><div class="grid grid-cols-2 gap-4"><div id="moqField" style="display:${p.category==='medicine_bag'?'block':'none'}"><label class="block text-sm">MOQ</label><input name="minOrderQty" type="number" value="${p.minOrderQty||1}" class="w-full border p-2 rounded"></div><div id="paperField" style="display:${p.category==='paper'?'block':'none'}"><label class="block text-sm">紙卷規格</label><select name="paperSpec" class="w-full border p-2 rounded" onchange="window.updateBoxPricePreview()"><option value="7cm_folded" ${p.paperSpec==='7cm_folded'?'selected':''}>7公分對折</option><option value="14cm_unfolded" ${p.paperSpec==='14cm_unfolded'?'selected':''}>14公分不對折</option></select><label class="block text-sm mt-2">每箱卷數 (試算用)</label><input name="rollsPerBox" type="number" oninput="window.updateBoxPricePreview()" value="${p.rollsPerBox||''}" class="w-full border p-2 rounded"><label class="block text-sm mt-2 flex items-center"><input type="checkbox" name="hasPrinting" class="mr-2" ${p.hasPrinting?'checked':''} onchange="document.getElementById('printOptions').style.display=this.checked?'block':'none'"> 提供印刷選項?</label></div><div id="printOptions" class="bg-blue-50 p-3 rounded border border-blue-100" style="display:${p.hasPrinting?'block':'none'}"><h4 class="text-xs font-bold text-blue-800 mb-2">印刷版設定</h4><div class="grid grid-cols-2 gap-2"><div><label class="text-xs">印刷成本</label><input name="costPrinted" type="number" value="${p.costPrinted||0}" class="w-full border p-1 rounded text-sm"></div><div><label class="text-xs">印刷售價</label><input name="pricePrinted" type="number" value="${p.pricePrinted||0}" class="w-full border p-1 rounded text-sm"></div><div><label class="text-xs">印刷MOQ</label><input name="moqPrinted" type="number" value="${p.moqPrinted||100}" class="w-full border p-1 rounded text-sm"></div></div></div></div><div><label class="block text-sm">圖片</label><label class="border p-2 rounded w-full block text-center cursor-pointer bg-slate-50 text-slate-500 hover:bg-slate-100 mb-2 text-sm"><input type="file" onchange="window.handleImageUpload(this)" class="hidden">選擇檔案</label><input id="imageUrlInput" name="imageUrl" type="text" value="${p.imageUrl||''}" placeholder="或輸入網址" class="w-full border p-2 rounded mt-1 text-sm"><img id="imagePreview" src="${p.imageUrl||''}" class="h-20 mt-2 object-contain bg-gray-50 ${p.imageUrl?'':'hidden'}"></div><div><label class="block text-sm">供應商</label><input name="supplierName" value="${p.supplierName||''}" required ${supplierReadOnly}></div><div class="grid grid-cols-2 gap-4"><div><label id="nameLabel" class="block text-sm">品名</label><input name="name" value="${p.name||''}" required class="w-full border p-2 rounded"></div><div><label class="block text-sm">規格</label><input name="spec" value="${p.spec||''}" class="w-full border p-2 rounded"></div></div><div class="bg-gray-50 p-3 rounded border"><div class="grid grid-cols-3 gap-3"><div><label class="block text-xs">成本</label><input name="cost" type="number" value="${p.cost||''}" oninput="window.calculatePrice('cost')" required class="w-full border p-1"></div><div><label class="block text-xs">未稅售價</label><input name="price" type="number" value="${p.price||''}" oninput="window.calculatePrice('preTax')" ${priceReadOnly} class="w-full border p-1"></div><div><label class="block text-xs">稅後(或含稅成本)</label><input name="priceAfterTax" type="number" value="${p.priceAfterTax||''}" oninput="window.calculatePrice('postTax')" required class="w-full border p-1 font-bold"></div></div><div id="boxPricePreview"></div></div><div class="grid grid-cols-2 gap-4" id="stockField"><div><label class="block text-sm">庫存</label><input name="stock" type="number" value="${p.stock||0}" required class="w-full border p-2 rounded"></div><div><label class="block text-sm">安全庫存</label><input name="safeStock" type="number" value="${p.safeStock||5}" required class="w-full border p-2 rounded"></div></div><button class="w-full bg-blue-600 text-white p-2 rounded font-bold">儲存</button></form></div></div>`; 
+        }
+        function renderCartModal() { if(!state.showCartModal)return''; const total=state.cart.reduce((s,i)=>s+i.price*i.qty,0); return `<div class="fixed inset-0 bg-black/50 z-50 flex justify-end" onclick="if(event.target===this)window.updateCartModal(false)"><div class="w-full max-w-md bg-white h-full flex flex-col animate-fade-in mobile-modal"><div class="p-6 border-b flex justify-between"><h3 class="font-bold text-lg">購物車</h3><button onclick="window.updateCartModal(false)">x</button></div><div class="flex-1 overflow-y-auto p-6 mobile-modal-content">${state.cart.map(i=>`<div class="flex gap-4 mb-4 items-center"><div class="w-12 h-12 bg-gray-100 rounded overflow-hidden flex-shrink-0"><img src="${i.imageUrl}" class="w-full h-full object-cover"></div><div class="flex-1"><h4 class="font-bold text-sm line-clamp-2">${i.name}</h4><div class="text-blue-600 text-xs font-bold">${formatMoney(i.price)}</div></div><div><span class="font-bold mx-2">x${i.qty}</span></div></div>`).join('')}</div><div class="p-6 border-t bg-gray-50"><textarea id="orderNoteInput" class="w-full border p-2 mb-4 text-sm" placeholder="備註"></textarea><div class="flex justify-between mb-4"><span class="text-sm">總計</span><span class="text-xl font-bold text-blue-700">${formatMoney(total)}</span></div><button onclick="window.checkout()" class="w-full bg-blue-600 text-white p-3 rounded font-bold">結帳</button></div></div></div>`; }
+        function renderPaymentModal() { if(!state.showPaymentModal)return''; return `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onclick="if(event.target===this)window.closePaymentModal()"><div class="bg-white p-6 rounded shadow-lg"><h3 class="font-bold mb-4">入帳確認</h3><form onsubmit="window.confirmPayment(event)"><input name="paymentDate" type="date" required value="${new Date().toISOString().split('T')[0]}" class="border p-2 mb-4 w-full"><button class="w-full bg-blue-600 text-white p-2 rounded">確認</button></form></div></div>`; }
+        function renderImagePreviewModal() { if (!state.showImagePreview || !state.previewImageUrl) return ''; return `<div class="fixed inset-0 bg-black/95 z-[70] flex items-center justify-center p-4 animate-fade-in img-preview-overlay" onclick="if(event.target===this)window.closeImagePreview()"><div class="relative w-full h-full flex items-center justify-center"><img src="${state.previewImageUrl}" class="max-w-full max-h-[90vh] object-contain rounded shadow-2xl"><button onclick="window.closeImagePreview()" class="absolute top-4 right-4 bg-white/20 hover:bg-white/40 text-white rounded-full p-2 backdrop-blur-md transition-colors"><i data-lucide="x" class="w-8 h-8"></i></button></div></div>`; }
+        function renderExpenseModal() { return state.showExpenseModal ? `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4"><div class="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6"><div class="flex justify-between mb-4"><h3 class="font-bold text-lg">新增支出</h3><button onclick="window.closeExpenseModal()">x</button></div><form onsubmit="window.saveExpense(event)" class="space-y-4"><input name="title" required placeholder="項目" class="w-full border p-2 rounded"><input name="amount" type="number" required placeholder="金額" class="w-full border p-2 rounded"><input name="date" type="date" required value="${new Date().toISOString().split('T')[0]}" class="w-full border p-2 rounded"><button class="w-full bg-red-600 text-white p-2 rounded">儲存</button></form></div></div>` : ''; }
+        function renderExpenses() { return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col"><div class="flex justify-between items-center mb-6"><h2 class="text-2xl font-bold text-gray-800">支出管理</h2><button onclick="window.openExpenseModal()" class="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 flex items-center shadow-sm"><i data-lucide="plus" class="w-4 h-4 mr-2"></i> 新增支出</button></div><div class="bg-white rounded-xl shadow-sm border border-gray-200 flex-1 overflow-hidden flex flex-col"><div class="overflow-x-auto custom-scrollbar flex-1"><table class="w-full text-left text-sm"><thead class="bg-gray-50 text-gray-500 sticky top-0 z-10"><tr><th class="p-4">日期</th><th class="p-4">項目</th><th class="p-4 text-right">金額</th></tr></thead><tbody class="divide-y divide-gray-100">${state.expenses.map(e=>`<tr class="hover:bg-gray-50"><td class="p-4 font-mono">${e.date}</td><td class="p-4 font-bold">${e.title}</td><td class="p-4 text-right font-bold text-red-600">-${formatMoney(e.amount)}</td></tr>`).join('')}</tbody></table></div></div></div>${renderExpenseModal()}`; }
+
+        function renderApp() {
+            const app = document.getElementById('app');
+            if (!state.currentUser) { app.innerHTML = renderLogin() + renderRegisterModal(); } 
+            else {
+                let mainContent = '';
+                if (state.currentView === 'dashboard') mainContent = renderDashboard();
+                else if (state.currentView === 'products') mainContent = renderProductList();
+                else if (state.currentView === 'orders') mainContent = renderOrders();
+                else if (state.currentView === 'shop') mainContent = renderShop();
+                else if (state.currentView === 'expenses') mainContent = renderExpenses();
+                else if (state.currentView === 'users') mainContent = renderUserManagement();
+                else if (state.currentView === 'crm') mainContent = renderCRM();
+                else if (state.currentView === 'repair_client') mainContent = renderClientRepair();
+                else if (state.currentView === 'repair_admin') mainContent = renderAdminRepairs();
+                else if (state.currentView === 'repair_history') mainContent = renderAdminRepairHistory();
+                else if (state.currentView === 'contact') mainContent = renderContact();
+
+                app.innerHTML = `<div class="flex h-full w-full">${renderSidebar()}<div class="flex-1 bg-slate-50 relative overflow-hidden flex flex-col">${mainContent}</div></div>${renderProductModal()}${renderPaymentModal()}${renderExpenseModal()}${renderRegisterModal()}${renderProfileModal()}${renderCartModal()}${renderImagePreviewModal()}${state.showClientRepairDetail?renderClientRepairDetail():''}${state.showAdminOrderModal?renderAdminOrderModal():''}`;
+            }
+            lucide.createIcons();
+        }
+
+        renderApp();
+        
+        if (isConfigured) {
+            onAuthStateChanged(auth, u => { if(u) initDataListeners(); });
+        }
+    </script>
+</body>
+</html>
