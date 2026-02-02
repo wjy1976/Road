@@ -1,8 +1,7 @@
-﻿
-<head>
+﻿<head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>羅德精技醫材訂貨系統 (Ver 5.3.3 Logo修正版)</title>
+    <title>羅德精技醫材訂貨系統 (Ver 5.4.8 註冊邏輯優化版)</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Lucide Icons -->
@@ -13,7 +12,7 @@
     <style>
         body { font-family: 'Noto Sans TC', sans-serif; background-color: #f8fafc; -webkit-tap-highlight-color: transparent; }
         .font-serif { font-family: 'Noto Serif TC', serif; }
-        /* 強制 Logo 使用極粗襯線體，模仿圖片風格 */
+        /* 強制 Logo 使用極粗襯線體 */
         .logo-font { font-family: 'Noto Serif TC', serif; font-weight: 900; }
         
         input, select, textarea { font-size: 16px !important; } 
@@ -25,17 +24,17 @@
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .animate-fade-in { animation: fadeIn 0.3s ease-out; }
+        .animate-fade-in { animation: fadeIn 0.4s ease-out forwards; }
         .product-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.75rem; }
-        @media (min-width: 640px) { .product-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 1rem; } }
-        @media (min-width: 1024px) { .product-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1.5rem; } }
+        @media (min-width: 640px) { .product-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem; } }
+        @media (min-width: 1024px) { .product-grid { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1.5rem; } }
         .category-grid { display: grid; grid-template-columns: 1fr; gap: 1rem; }
         @media (min-width: 640px) { .category-grid { grid-template-columns: repeat(2, 1fr); } }
         @media (min-width: 1024px) { .category-grid { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); } }
         .product-card { transition: transform 0.2s, box-shadow 0.2s; }
         .product-card:active { transform: scale(0.98); }
         @media (min-width: 768px) { .product-card:hover { transform: translateY(-4px); box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.1); } }
-        .img-container { width: 100%; aspect-ratio: 1/1; background-color: #f1f5f9; display: flex; align-items: center; justify-content: center; overflow: hidden; border-radius: 0.5rem; position: relative; }
+        .img-container { width: 100%; aspect-ratio: 1/1; background-color: #f1f5f9; display: flex; align-items: center; justify-content: center; overflow: hidden; border-radius: 0.75rem; position: relative; }
         .img-container img { width: 100%; height: 100%; object-fit: cover; }
         .category-card-elegant {
             background: white; border-radius: 16px; padding: 20px; display: flex; flex-direction: column; justify-content: space-between; height: 140px;
@@ -54,7 +53,8 @@
         .chat-bubble-admin { background-color: #f8fafc; color: #334155; border: 1px solid #e2e8f0; border-bottom-left-radius: 2px; margin-right: auto; }
         .clickable-card:active { transform: scale(0.98); }
         
-        .bg-elegant { background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); }
+        /* Updated Background to match index-logo fixed4 */
+        .bg-elegant { background: radial-gradient(circle at top right, #f8fafc, #eff6ff); }
         .btn-noble { background: linear-gradient(to right, #2c3e50, #4ca1af); box-shadow: 0 4px 15px rgba(44, 62, 80, 0.3); }
         .text-gold { color: #b78628; }
         
@@ -62,6 +62,16 @@
         .logo-text-zh { color: #255a9e; } 
         .logo-text-en { color: #255a9e; }
         .logo-divider { background-color: #255a9e; }
+
+        /* Hide Number Input Spinner */
+        .no-spinner::-webkit-inner-spin-button, 
+        .no-spinner::-webkit-outer-spin-button { 
+            -webkit-appearance: none; 
+            margin: 0; 
+        }
+        .no-spinner { 
+            -moz-appearance: textfield; 
+        }
     </style>
 </head>
 <body class="text-slate-800 h-screen w-full overflow-hidden flex flex-col bg-slate-50">
@@ -132,7 +142,7 @@
             products: [], orders: [], expenses: [], repairs: [], cart: [],
             isLoading: true,
             viewHistory: [],
-            productNav: { view: 'category', category: null, supplier: null }, // New: Product Nav State
+            productNav: { view: 'category', category: null, supplier: null }, 
             showCartModal: false, showProductModal: false, showPaymentModal: false, showExpenseModal: false,
             showRegisterModal: false, showProfileModal: false, showRepairModal: false, showRepairProcessModal: false, 
             showClientRepairDetail: false, showAdminOrderModal: false, showClientHistoryModal: false,
@@ -224,6 +234,18 @@
             }
         };
 
+        window.deleteRepair = async (e, docId) => {
+            if(e) e.stopPropagation();
+            if(!confirm("確定要取消此叫修申請嗎？")) return;
+            try {
+                await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'repairs', docId));
+                showToast("已取消叫修");
+            } catch(err) {
+                console.error(err);
+                showToast("刪除失敗: " + err.message, "error");
+            }
+        };
+
         window.deleteExpense = async (e, docId) => {
             if(e) e.stopPropagation();
             if (!docId) return showToast("支出ID無效", 'error');
@@ -304,21 +326,37 @@
         };
         window.openRegisterModal = (role) => { state.registerRole = role; state.showRegisterModal = true; renderApp(); };
         window.closeRegisterModal = () => { state.showRegisterModal = false; renderApp(); };
+        
+        // --- FIXED HANDLE REGISTER ---
         window.handleRegister = async e => {
             e.preventDefault(); 
             const f = e.target;
             if(state.users.some(u=>u.username===f.registerName.value.trim())) return showToast('名稱已存在', 'error');
             const role = state.users.length===0 ? 'admin' : state.registerRole;
+            const name = f.registerName.value.trim();
+            
             await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'users'), {
-                username: f.registerName.value.trim(), password: f.password.value.trim(), role,
-                name: f.registerName.value.trim(), phone: f.phone.value.trim(), address: f.address.value.trim(),
+                username: name, password: f.password.value.trim(), role,
+                name: name, phone: f.phone.value.trim(), address: f.address.value.trim(),
                 city: f.city.value, type: f.type.value, note: ''
             });
-            state.currentUser = { username: f.registerName.value.trim(), role }; 
+            
+            // Immediately populate state.currentUser with name to prevent renderSidebar error
+            state.currentUser = { 
+                username: name, 
+                name: name, // This was missing and caused the crash
+                role,
+                city: f.city.value, 
+                type: f.type.value,
+                phone: f.phone.value.trim() 
+            }; 
+            
             state.showRegisterModal = false;
             state.currentView = role==='admin'?'dashboard':(role==='supplier'?'products':'shop');
             showToast('註冊成功');
+            renderApp(); // Force UI update
         };
+        
         window.logout = () => { 
             state.currentUser = null; 
             state.currentView = 'login'; 
@@ -432,124 +470,167 @@
         window.closeClientHistory = () => { state.showClientHistoryModal = false; renderApp(); };
         window.setHistoryYear = (y) => { state.historyYearFilter = y; renderApp(); };
 
-        // Product/Cart Logic
+        // Product/Cart Logic (Fixed Min Qty Logic)
         window.adjustShopQty = (id, d) => { 
             const el=document.getElementById(`qty-${id}`); 
             if(el){ 
                 let v=parseFloat(el.value)||0; 
                 v+=d; 
-                if(v < 0) v=0; 
                 let min = parseFloat(el.min)||0;
-                if(v < min && d < 0) v = min; // prevent going below min only if decreasing
-                if(v < 0) v=min; // Absolute floor
+                
+                // Fix: Ensure we cannot go below min
+                if (v < min) v = min;
                 
                 el.value=v; 
-                window.updateShopItemDisplay(id); 
+                window.updateShopCard(id); 
             }
         };
         
-        window.updateShopItemDisplay = (id) => {
+        window.updateShopCard = (id) => {
             const p = state.products.find(x => x.id === id);
-            const elQty = document.getElementById(`qty-${id}`);
-            const elHint = document.getElementById(`hint-${id}`);
-            if(!p || !elQty) return;
-            
-            const val = parseFloat(elQty.value) || 0;
-            
-            if (p.category === 'paper' && p.rollsPerBox) {
-                const totalRolls = val * p.rollsPerBox;
-                if(elHint) elHint.innerText = `共 ${totalRolls} 卷`;
-            }
-        };
+            if (!p) return;
 
-        window.togglePrintingOption = (id, cb) => {
-            const p = state.products.find(x => x.id === id);
+            const elQty = document.getElementById(`qty-${id}`);
+            const elPrint = document.getElementById(`print-${id}`);
+            const elInvoice = document.getElementById(`invoice-${id}`);
             const elPrice = document.getElementById(`price-${id}`);
             const elMoq = document.getElementById(`moq-${id}`);
-            const elQty = document.getElementById(`qty-${id}`);
-            if(!p || !elPrice || !elQty) return;
-            
-            let price = p.priceAfterTax;
-            let isBoxUnit = false;
-            let rollsPerBox = p.rollsPerBox || 1;
-            let minQty = p.minOrderQty || 1;
-            let displayUnit = "個";
+            const elHint = document.getElementById(`hint-${id}`);
 
-            if (p.category === 'paper') {
-                isBoxUnit = (rollsPerBox > 0);
-                displayUnit = isBoxUnit ? "箱" : "卷";
-                
-                if(cb.checked) {
-                    price = p.pricePrinted || price; 
-                    if(p.paperSpec === '7cm_folded') {
-                         minQty = Math.ceil(100 / rollsPerBox); 
-                    } else {
-                         minQty = Math.ceil(60 / rollsPerBox);
-                    }
+            let isPaper = p.category === 'paper';
+            let rollsPerBox = (isPaper && p.rollsPerBox > 0) ? p.rollsPerBox : 1;
+            
+            // Base Price (Per Unit/Roll) - Default to Pre-Tax
+            let unitPrice = p.price; 
+            let isPrinted = elPrint && elPrint.checked;
+            
+            if (isPaper && isPrinted) {
+                unitPrice = p.pricePrinted || p.price; 
+            }
+
+            // Apply Tax if Invoice Checked
+            let hasInvoice = elInvoice && elInvoice.checked;
+            if (hasInvoice) {
+                unitPrice = unitPrice * 1.05; // Force calculate from pre-tax as requested
+            }
+
+            // Calculate Display Price (Per Box if Paper)
+            let displayPrice = unitPrice;
+            let unitLabel = "個";
+            
+            if (isPaper) {
+                displayPrice = unitPrice * rollsPerBox;
+                unitLabel = "箱";
+            }
+
+            // Update UI
+            if (elPrice) elPrice.innerText = formatMoney(displayPrice);
+            
+            // Update MOQ Text & Logic
+            let minQty = p.minOrderQty || 1;
+            if (isPaper) {
+                if (isPrinted) {
+                     // Printed: 7cm -> 100 rolls, 14cm -> 60 rolls
+                     let minRolls = (p.paperSpec === '7cm_folded') ? 100 : 60;
+                     minQty = Math.ceil(minRolls / rollsPerBox);
                 } else {
-                    if(p.paperSpec === '7cm_folded') {
-                         minQty = Math.ceil(20 / rollsPerBox);
-                    } else {
-                         minQty = Math.ceil(8 / rollsPerBox);
-                    }
+                     // Blank: 7cm -> 20 rolls, 14cm -> 8 rolls
+                     let minRolls = (p.paperSpec === '7cm_folded') ? 20 : 8;
+                     minQty = Math.ceil(minRolls / rollsPerBox);
+                }
+            }
+            
+            if (elMoq) elMoq.innerText = `最低採購量: ${minQty} ${unitLabel}`;
+            if (elQty) {
+                elQty.min = minQty;
+                // Auto-bump quantity if it falls below new min (e.g. toggling print on)
+                if (parseFloat(elQty.value) < minQty) {
+                    elQty.value = minQty;
                 }
             }
 
-            elPrice.innerText = formatMoney(price);
-            if(elMoq) elMoq.innerText = `MOQ: ${minQty} ${displayUnit}`;
-            elQty.min = minQty; 
-            elQty.value = minQty;
-            window.updateShopItemDisplay(id);
+            // Update Hint (Total Rolls)
+            if (isPaper && elHint) {
+                let qty = parseFloat(elQty?.value) || 0;
+                elHint.innerText = `(共 ${qty * rollsPerBox} 卷)`;
+            } else if (elHint) {
+                elHint.innerText = '';
+            }
         };
 
-        window.addToCart = (id, qtyId, printId) => {
+        window.addToCart = (id, qtyId, printId, invoiceId) => {
             const p = state.products.find(x => x.id === id);
-            let isPrinted = false;
-            if(printId) { const cb = document.getElementById(printId); if(cb && cb.checked) isPrinted = true; }
+            let isPrinted = document.getElementById(printId)?.checked || false;
+            let hasInvoice = document.getElementById(invoiceId)?.checked || false;
             
             let pid = p.id;
             let name = p.name;
-            let price = p.priceAfterTax;
-            let cost = p.cost;
-            let rollsPerBox = p.rollsPerBox || 1;
+            let rollsPerBox = (p.category === 'paper' && p.rollsPerBox > 0) ? p.rollsPerBox : 1;
             
-            if(p.category === 'paper' && isPrinted) {
-                pid += '_printed';
-                name += ' (印刷)';
-                price = p.pricePrinted || price;
-                cost = p.costPrinted || cost;
-            } else if(p.category === 'paper') {
-                name += ' (空白)';
+            // Base Price logic
+            let finalPrice = p.price;
+            
+            if(p.category === 'paper') {
+                if (isPrinted) {
+                    pid += '_printed';
+                    name += ' (印刷)';
+                    finalPrice = p.pricePrinted || p.price;
+                } else {
+                    name += ' (空白)';
+                }
             }
             
+            // Tax logic
+            if (hasInvoice) {
+                name += ' [含稅]';
+                finalPrice = finalPrice * 1.05; // Calculate from pre-tax
+            }
+
             const elQty = document.getElementById(qtyId);
             let inputVal = parseFloat(elQty ? elQty.value : 1) || 0;
             
+            // Convert Boxes to Units/Rolls for cart storage?
+            // Existing logic stores total units (rolls).
             let finalQty = inputVal;
-            if (p.category === 'paper' && rollsPerBox > 1) {
+            if (p.category === 'paper') {
                 finalQty = inputVal * rollsPerBox;
             }
             
-            let minQty = 1;
+            // Min Qty Check (re-verify)
+            let minQty = p.minOrderQty || 1;
             if (p.category === 'paper') {
-                 if (isPrinted) {
-                     minQty = (p.paperSpec === '7cm_folded') ? 100 : 60;
-                 } else {
-                     minQty = (p.paperSpec === '7cm_folded') ? 20 : 8;
-                 }
+                 let minRolls = isPrinted ? ((p.paperSpec === '7cm_folded') ? 100 : 60) : ((p.paperSpec === '7cm_folded') ? 20 : 8);
+                 if (finalQty < minRolls) return alert(`最低採購量不足 (需至少 ${minRolls} 卷, 即 ${Math.ceil(minRolls/rollsPerBox)} 箱)`);
             } else {
-                minQty = p.minOrderQty || 1;
+                if (finalQty < minQty) return alert(`最低採購量不足`);
             }
 
-            if(finalQty < minQty) return alert(`最低訂購量不足 (需至少 ${minQty} 卷/個)`);
+            // Differentiate ID by tax status to allow mixed cart?
+            // Simplified: treat as different item ID
+            if (hasInvoice) pid += '_tax';
 
-            const item = state.cart.find(x => x.productId === pid);
-            if(item) item.qty += finalQty;
-            else state.cart.push({ 
-                productId: pid, name, price, image: p.imageUrl, qty: finalQty, 
-                minQty, cost, category: p.category, supplierName: p.supplierName, spec: p.spec 
-            });
-            showToast(`已加入 ${finalQty} ${p.category==='paper'?'卷':'個'}`); 
+            const existingItem = state.cart.find(x => x.productId === pid);
+
+            if(existingItem) {
+                existingItem.qty += finalQty;
+            } else {
+                state.cart.push({ 
+                    productId: pid, 
+                    name, 
+                    price: finalPrice, 
+                    image: p.imageUrl, 
+                    qty: finalQty, 
+                    minQty, 
+                    cost: p.cost, 
+                    category: p.category, 
+                    supplierName: p.supplierName, 
+                    spec: p.spec,
+                    hasInvoice 
+                });
+            }
+            
+            let unitStr = p.category === 'paper' ? '箱' : '個';
+            showToast(`已加入 ${inputVal} ${unitStr}`); 
             renderApp();
         };
 
@@ -879,14 +960,89 @@
 
         // --- Render Functions (Clean & Unique) ---
         function renderLogin() {
-             if (state.loginMode === 'select') return `<div class="h-full flex flex-col items-center justify-center p-6 bg-elegant"><div class="w-full max-w-sm text-center"><div class="mb-12"><div class="flex items-center justify-center w-full select-none gap-4"><div class="text-right pr-4 border-r-4 border-[#255a9e] h-[48px] flex items-center"><div class="text-5xl font-black logo-text-zh logo-font tracking-widest leading-none whitespace-nowrap pt-1">羅德精技</div></div><div class="text-left flex flex-col justify-between h-[48px] py-0.5"><div class="text-2xl font-bold logo-text-en font-serif leading-none tracking-tight whitespace-nowrap text-[#255a9e]">Road Machinery</div><div class="text-base font-bold logo-text-en leading-none w-full flex justify-between whitespace-nowrap text-[#255a9e] tracking-widest"><span>專</span><span>業</span><span class="px-1">‧</span><span>服</span><span>務</span><span class="px-1">‧</span><span>品</span><span>質</span></div></div></div></div><div class="space-y-4"><button onclick="window.setLoginMode('client')" class="w-full bg-white hover:bg-slate-50 border-2 border-slate-100 p-5 rounded-2xl flex items-center shadow-lg hover:shadow-xl transition-all group"><div class="w-12 h-12 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mr-4 group-hover:scale-110 transition-transform"><i data-lucide="stethoscope" class="w-6 h-6"></i></div><div class="text-left"><span class="block text-slate-400 text-xs font-bold uppercase tracking-wider">For Clients</span><span class="text-xl font-bold text-slate-800">醫師 / 藥師 訂貨</span></div></button><button onclick="window.setLoginMode('staff')" class="w-full bg-slate-800 hover:bg-slate-900 text-white p-5 rounded-2xl flex items-center shadow-xl hover:shadow-2xl transition-all group border border-slate-700"><div class="w-12 h-12 rounded-full bg-slate-700 text-slate-200 flex items-center justify-center mr-4 group-hover:scale-110 transition-transform"><i data-lucide="shield" class="w-6 h-6"></i></div><div class="text-left"><span class="block text-slate-400 text-xs font-bold uppercase tracking-wider">For Staff</span><span class="text-xl font-bold text-slate-100">內部 / 廠商 登入</span></div></button></div><p class="mt-12 text-slate-400 text-xs font-mono">System Ver 5.3.3</p></div></div>`;
-             return `<div class="h-full flex flex-col items-center justify-center p-6 bg-elegant"><div class="w-full max-w-sm bg-white p-8 rounded-3xl shadow-2xl border border-white/50 backdrop-blur-sm"><button onclick="window.setLoginMode('select')" class="mb-6 text-slate-400 flex items-center hover:text-slate-600 transition-colors"><i data-lucide="arrow-left" class="w-4 h-4 mr-1"></i> 返回選擇</button><h2 class="text-3xl font-bold text-slate-800 mb-2 font-serif">${state.loginMode==='client'?'診所/藥局':'內部管理'}</h2><p class="text-slate-400 text-sm mb-8">請輸入您的帳號資訊以繼續</p><form onsubmit="window.handleLogin(event)" class="space-y-5"><div class="space-y-1"><label class="text-xs font-bold text-slate-500 ml-1">帳號 / 電話</label><input name="username" class="w-full p-4 border border-slate-200 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all font-medium"></div><div class="space-y-1"><label class="text-xs font-bold text-slate-500 ml-1">密碼</label><input name="password" type="password" class="w-full p-4 border border-slate-200 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all font-medium"></div><button ${state.isLoading?'disabled':''} class="w-full btn-noble text-white p-4 rounded-xl font-bold text-lg shadow-lg hover:shadow-xl active:scale-[0.98] transition-all flex items-center justify-center">${state.isLoading?'連線中...':'登入系統'} <i data-lucide="arrow-right" class="ml-2 w-5 h-5"></i></button></form><div class="mt-8 pt-6 border-t border-slate-100 text-center"><p class="text-slate-400 text-sm mb-2">還沒有帳號？</p><button onclick="window.openRegisterModal('${state.loginMode}')" class="text-blue-600 font-bold hover:underline">立即註冊帳號</button></div></div></div>`;
+             if (state.loginMode === 'select') {
+                return `
+                <div class="h-full flex flex-col items-center justify-center p-6 bg-elegant">
+                    <div class="w-full max-w-5xl text-center mb-16 animate-fade-in">
+                        <div class="flex flex-col md:flex-row items-center justify-center w-full select-none transform scale-110 md:scale-125 origin-center text-[#255a9e]">
+                            <div class="flex-1 md:text-right text-center md:pr-8 md:border-r-4 md:border-[#255a9e] mb-4 md:mb-0">
+                                <div class="text-6xl md:text-7xl font-black logo-font tracking-widest leading-none whitespace-nowrap py-1">羅德精技</div>
+                            </div>
+                            <div class="flex-1 text-center md:text-left md:pl-8 flex flex-col justify-center h-auto py-1">
+                                <div class="inline-block text-left w-fit">
+                                    <div class="text-3xl md:text-4xl font-bold font-serif leading-none tracking-tight whitespace-nowrap mb-2">Road Machinery</div>
+                                    <div class="w-full flex justify-between text-base md:text-xl font-bold leading-none px-0.5">
+                                        <span>專</span><span>業</span><span>•</span><span>服</span><span>務</span><span>•</span><span>品</span><span>質</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <p class="mt-8 text-[#255a9e] text-sm md:text-base font-medium tracking-[0.3em] opacity-70 uppercase">Medical Supply System</p>
+                    </div>
+
+                    <div class="w-full max-w-2xl grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in" style="animation-delay: 0.1s">
+                        <button onclick="window.setLoginMode('client')" class="group bg-white hover:bg-blue-50 border-2 border-slate-100 p-8 rounded-[2.5rem] flex flex-col items-center text-center shadow-lg hover:shadow-2xl transition-all border-b-8 border-b-blue-500">
+                            <div class="w-20 h-20 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform"><i data-lucide="stethoscope" class="w-10 h-10"></i></div>
+                            <div>
+                                <span class="block text-slate-400 text-xs font-bold uppercase tracking-widest mb-1">For Clients</span>
+                                <span class="text-2xl font-black text-slate-800">醫師 / 藥師 訂貨</span>
+                            </div>
+                        </button>
+                        <button onclick="window.setLoginMode('staff')" class="group bg-slate-800 hover:bg-slate-900 text-white p-8 rounded-[2.5rem] flex flex-col items-center text-center shadow-lg hover:shadow-2xl transition-all border-b-8 border-b-slate-600">
+                            <div class="w-20 h-20 rounded-2xl bg-slate-700 text-slate-200 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform"><i data-lucide="shield" class="w-10 h-10"></i></div>
+                            <div>
+                                <span class="block text-slate-400 text-xs font-bold uppercase tracking-widest mb-1">For Staff</span>
+                                <span class="text-2xl font-black text-slate-100">內部 / 廠商 登入</span>
+                            </div>
+                        </button>
+                    </div>
+                <p class="mt-12 text-slate-400 text-xs font-mono">System Ver 5.4.8 </p>
+                </div>`;
+            }
+            
+            // Login Form
+            return `
+            <div class="h-full flex items-center justify-center p-6 bg-elegant">
+                <div class="w-full max-w-md bg-white p-10 rounded-[3rem] shadow-2xl border border-slate-50 animate-fade-in">
+                    <button onclick="window.setLoginMode('select')" class="mb-8 text-slate-400 hover:text-blue-600 flex items-center font-bold transition-colors"><i data-lucide="arrow-left" class="w-5 h-5 mr-2"></i>返回</button>
+                    <div class="mb-10 text-center"><h3 class="text-3xl font-black text-slate-800 mb-2">${state.loginMode==='client'?'診所/藥局':'內部管理'}</h3><p class="text-slate-500 text-sm">請輸入您的帳號資訊以繼續</p></div>
+                    <form onsubmit="window.handleLogin(event)" class="space-y-6">
+                        <input name="username" type="text" required class="w-full px-6 py-5 bg-slate-50 border-2 border-slate-50 rounded-2xl focus:border-blue-500 focus:bg-white outline-none transition-all font-medium text-slate-700" placeholder="帳號 / 電話">
+                        <input name="password" type="password" required class="w-full px-6 py-5 bg-slate-50 border-2 border-slate-50 rounded-2xl focus:border-blue-500 focus:bg-white outline-none transition-all font-medium text-slate-700" placeholder="密碼">
+                        <button type="submit" ${state.isLoading?'disabled':''} class="w-full bg-blue-600 hover:bg-blue-700 text-white font-black py-5 rounded-2xl shadow-xl shadow-blue-200 transition-all transform active:scale-95 flex items-center justify-center">${state.isLoading?'連線中...':'立即登入'}</button>
+                    </form>
+                    <div class="mt-8 text-center"><button onclick="window.openRegisterModal('${state.loginMode==='staff'?'supplier':'client'}')" class="text-slate-400 text-sm hover:text-blue-600 font-bold">還沒有帳號？立即註冊</button></div>
+                </div>
+            </div>`;
         }
 
         function renderRegisterModal() {
             if (!state.showRegisterModal) return '';
-            const roleTitle = state.registerRole === 'client' ? '診所/藥局' : '供應商';
-            return `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4"><div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-fade-in max-h-[90vh] overflow-y-auto custom-scrollbar mobile-modal"><div class="p-5 border-b border-gray-100 bg-blue-50 flex justify-between items-center sticky top-0 bg-white z-10"><h3 class="font-bold text-lg text-gray-800">${roleTitle} 註冊</h3><button onclick="window.closeRegisterModal()" class="text-gray-400 hover:text-gray-600"><i data-lucide="x" class="w-5 h-5"></i></button></div><form onsubmit="window.handleRegister(event)" class="p-6 space-y-4"><div><label class="block text-sm font-medium text-gray-700 mb-1">${roleTitle}名稱 (即登入帳號)</label><input name="registerName" type="text" required class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><div><label class="block text-sm font-medium text-gray-700 mb-1">聯絡電話</label><input name="phone" type="tel" required class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><div class="grid grid-cols-2 gap-2"><div><label class="block text-sm font-medium text-gray-700 mb-1">縣市</label><select name="city" class="w-full border border-gray-300 rounded-lg p-2 outline-none bg-white"><option value="">選擇縣市</option>${TAIWAN_CITIES.map(c => `<option value="${c}">${c}</option>`).join('')}</select></div><div><label class="block text-sm font-medium text-gray-700 mb-1">類型</label><select name="type" class="w-full border border-gray-300 rounded-lg p-2 outline-none bg-white"><option value="clinic" ${state.registerRole==='client'?'selected':''}>診所</option><option value="pharmacy">藥局</option><option value="hospital">醫院</option><option value="supplier" ${state.registerRole==='supplier'?'selected':''}>供應商</option><option value="other">其他</option></select></div></div><div><label class="block text-sm font-medium text-gray-700 mb-1">地址</label><input name="address" type="text" class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><div><label class="block text-sm font-medium text-gray-700 mb-1">密碼</label><input name="password" type="password" required class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><div><label class="block text-sm font-medium text-gray-700 mb-1">確認密碼</label><input name="confirmPassword" type="password" required class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><button type="submit" class="w-full py-3 bg-blue-600 text-white hover:bg-blue-700 rounded-lg font-bold shadow-md">註冊並登入</button></form></div></div>`;
+            const isClient = state.registerRole === 'client';
+            const roleTitle = isClient ? '診所/藥局' : '供應商';
+            
+            let typeFieldHTML = '';
+            if (isClient) {
+                typeFieldHTML = `
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">類型</label>
+                        <select name="type" class="w-full border border-gray-300 rounded-lg p-2 outline-none bg-white">
+                            <option value="clinic" selected>診所</option>
+                            <option value="pharmacy">藥局</option>
+                            <option value="hospital">醫院</option>
+                            <option value="other">其他</option>
+                        </select>
+                    </div>`;
+            } else {
+                typeFieldHTML = `
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">類型</label>
+                        <div class="w-full border border-gray-200 bg-gray-100 rounded-lg p-2 text-gray-500 cursor-not-allowed">供應商</div>
+                        <input type="hidden" name="type" value="supplier">
+                    </div>`;
+            }
+
+            return `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4"><div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-fade-in max-h-[90vh] overflow-y-auto custom-scrollbar mobile-modal"><div class="p-5 border-b border-gray-100 bg-blue-50 flex justify-between items-center sticky top-0 bg-white z-10"><h3 class="font-bold text-lg text-gray-800">${roleTitle} 註冊</h3><button onclick="window.closeRegisterModal()" class="text-gray-400 hover:text-gray-600"><i data-lucide="x" class="w-5 h-5"></i></button></div><form onsubmit="window.handleRegister(event)" class="p-6 space-y-4"><div><label class="block text-sm font-medium text-gray-700 mb-1">${roleTitle}名稱 (即登入帳號)</label><input name="registerName" type="text" required class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><div><label class="block text-sm font-medium text-gray-700 mb-1">聯絡電話</label><input name="phone" type="tel" required class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><div class="grid grid-cols-2 gap-2"><div><label class="block text-sm font-medium text-gray-700 mb-1">縣市</label><select name="city" class="w-full border border-gray-300 rounded-lg p-2 outline-none bg-white"><option value="">選擇縣市</option>${TAIWAN_CITIES.map(c => `<option value="${c}">${c}</option>`).join('')}</select></div>${typeFieldHTML}</div><div><label class="block text-sm font-medium text-gray-700 mb-1">地址</label><input name="address" type="text" class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><div><label class="block text-sm font-medium text-gray-700 mb-1">密碼</label><input name="password" type="password" required class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><div><label class="block text-sm font-medium text-gray-700 mb-1">確認密碼</label><input name="confirmPassword" type="password" required class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><button type="submit" class="w-full py-3 bg-blue-600 text-white hover:bg-blue-700 rounded-lg font-bold shadow-md">註冊並登入</button></form></div></div>`;
         }
 
         function renderProfileModal() {
@@ -938,8 +1094,11 @@
 
             const showMobileNav = currentMainTabs.includes(state.currentView);
             const mobileNavItems = menuItems.slice(0,4);
+            
+            // Add safety check for state.currentUser.name to prevent errors
+            const firstChar = (state.currentUser.name || state.currentUser.username)[0];
 
-            return `<div class="hidden md:flex w-64 flex-col bg-white border-r border-slate-200 h-full"><div class="p-5 border-b border-slate-100"><div class="flex items-center justify-center w-full select-none gap-2"><div class="text-right pr-2 border-r-2 border-[#255a9e] h-[32px] flex items-center"><div class="text-2xl font-black logo-text-zh logo-font tracking-wide leading-none whitespace-nowrap text-[#255a9e]">羅德精技</div></div><div class="text-left flex flex-col justify-between h-[32px] py-0.5"><div class="text-xs font-bold logo-text-en font-serif leading-none tracking-tight whitespace-nowrap text-[#255a9e]">Road Machinery</div><div class="text-[9px] font-bold logo-text-en leading-none w-full flex justify-between whitespace-nowrap text-[#255a9e] tracking-wider"><span>專</span><span>業</span><span>‧</span><span>服</span><span>務</span><span>‧</span><span>品</span><span>質</span></div></div></div></div><nav class="flex-1 p-4 space-y-1 overflow-y-auto">${menuItems.map(i => `<button onclick="window.setView('${i.id}')" class="w-full flex items-center justify-between p-3 rounded-xl transition-all ${state.currentView===i.id?'bg-blue-50 text-blue-700 font-bold':'text-slate-500 hover:bg-slate-50'}"><div class="flex items-center"><i data-lucide="${i.icon}" class="w-5 h-5 mr-3"></i>${i.label}</div>${i.badge>0 ? `<span class="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">${i.badge}</span>` : ''}</button>`).join('')}</nav><div class="p-4 border-t border-slate-100"><div class="flex items-center gap-3 mb-4 px-2"><div class="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-600">${state.currentUser.name[0]}</div><div class="flex-1 min-w-0"><p class="text-sm font-bold text-slate-700 truncate">${state.currentUser.name}</p></div></div><div class="space-y-2"><button onclick="window.openModal('profile')" class="w-full py-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-500 hover:bg-slate-50">個人資料</button><button onclick="window.logout()" class="w-full py-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-500 hover:bg-slate-50">登出</button></div></div></div>${showMobileNav ? `<div class="md:hidden fixed bottom-0 w-full bg-white border-t border-slate-200 flex justify-around py-2 px-1 z-40 pb-safe animate-fade-in">${mobileNavItems.map(i => `<button onclick="window.setView('${i.id}')" class="flex flex-col items-center p-2 min-w-[60px] ${state.currentView===i.id?'text-blue-600':'text-slate-400'}"><div class="relative"><i data-lucide="${i.icon}" class="w-6 h-6 mb-1 ${state.currentView===i.id?'fill-current/10':''}"></i>${i.badge>0 ? `<span class="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white"></span>`:''}</div><span class="text-[10px] font-medium">${i.label}</span></button>`).join('')}<button onclick="window.openModal('profile')" class="flex flex-col items-center p-2 min-w-[60px] text-slate-400"><div class="relative"><i data-lucide="user" class="w-6 h-6 mb-1"></i></div><span class="text-[10px] font-medium">我的</span></button></div>` : ''}`;
+            return `<div class="hidden md:flex w-64 flex-col bg-white border-r border-slate-200 h-full"><div class="p-5 border-b border-slate-100"><div class="flex items-center justify-center w-full select-none gap-2"><div class="text-right pr-2 border-r-2 border-[#255a9e] h-[32px] flex items-center"><div class="text-2xl font-black logo-text-zh logo-font tracking-wide leading-none whitespace-nowrap text-[#255a9e]">羅德精技</div></div><div class="text-left flex flex-col justify-between h-[32px] py-0.5"><div class="text-xs font-bold logo-text-en font-serif leading-none tracking-tight whitespace-nowrap text-[#255a9e]">Road Machinery</div><div class="text-[9px] font-bold logo-text-en leading-none w-full flex justify-between whitespace-nowrap text-[#255a9e] tracking-wider"><span>專</span><span>業</span><span>‧</span><span>服</span><span>務</span><span>‧</span><span>品</span><span>質</span></div></div></div></div><nav class="flex-1 p-4 space-y-1 overflow-y-auto">${menuItems.map(i => `<button onclick="window.setView('${i.id}')" class="w-full flex items-center justify-between p-3 rounded-xl transition-all ${state.currentView===i.id?'bg-blue-50 text-blue-700 font-bold':'text-slate-500 hover:bg-slate-50'}"><div class="flex items-center"><i data-lucide="${i.icon}" class="w-5 h-5 mr-3"></i>${i.label}</div>${i.badge>0 ? `<span class="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">${i.badge}</span>` : ''}</button>`).join('')}</nav><div class="p-4 border-t border-slate-100"><div class="flex items-center gap-3 mb-4 px-2"><div class="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-600">${firstChar}</div><div class="flex-1 min-w-0"><p class="text-sm font-bold text-slate-700 truncate">${state.currentUser.name}</p></div></div><div class="space-y-2"><button onclick="window.openModal('profile')" class="w-full py-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-500 hover:bg-slate-50">個人資料</button><button onclick="window.logout()" class="w-full py-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-500 hover:bg-slate-50">登出</button></div></div></div>${showMobileNav ? `<div class="md:hidden fixed bottom-0 w-full bg-white border-t border-slate-200 flex justify-around py-2 px-1 z-40 pb-safe animate-fade-in">${mobileNavItems.map(i => `<button onclick="window.setView('${i.id}')" class="flex flex-col items-center p-2 min-w-[60px] ${state.currentView===i.id?'text-blue-600':'text-slate-400'}"><div class="relative"><i data-lucide="${i.icon}" class="w-6 h-6 mb-1 ${state.currentView===i.id?'fill-current/10':''}"></i>${i.badge>0 ? `<span class="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white"></span>`:''}</div><span class="text-[10px] font-medium">${i.label}</span></button>`).join('')}<button onclick="window.openModal('profile')" class="flex flex-col items-center p-2 min-w-[60px] text-slate-400"><div class="relative"><i data-lucide="user" class="w-6 h-6 mb-1"></i></div><span class="text-[10px] font-medium">我的</span></button></div>` : ''}`;
         }
 
         function renderProductList() {
@@ -959,15 +1118,24 @@
 
             // VIEW: Categories
             if (state.productNav.view === 'category') {
-                const cats = [ 
+                const allCats = [ 
                     { id: 'machine', name: '包藥機系列', icon: 'printer', theme: 'border-l-4 border-indigo-500 text-indigo-900', iconColor: 'text-indigo-500' }, 
                     { id: 'paper', name: '包藥紙卷', icon: 'scroll', theme: 'border-l-4 border-amber-500 text-amber-900', iconColor: 'text-amber-500' }, 
                     { id: 'medicine_bag', name: '夾鍊藥袋', icon: 'shopping-bag', theme: 'border-l-4 border-emerald-500 text-emerald-900', iconColor: 'text-emerald-500' }, 
                     { id: 'parts', name: '維修零件', icon: 'settings', theme: 'border-l-4 border-blue-500 text-blue-900', iconColor: 'text-blue-500' },
                     { id: 'other', name: '其他商品', icon: 'box', theme: 'border-l-4 border-slate-500 text-slate-900', iconColor: 'text-slate-500' } 
                 ];
+
+                let displayCats = allCats;
                 
-                return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col pt-20 md:pt-8"><div class="flex justify-between items-center mb-6"><h2 class="text-2xl font-bold text-slate-800">產品管理</h2><button onclick="window.openProductModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center shadow-sm"><i data-lucide="plus" class="w-4 h-4 mr-2"></i> 新增產品</button></div><div class="category-grid">${cats.map(c => `<div onclick="window.setProductNav('${isSupplier?'list':'supplier'}', '${c.id}')" class="category-card-elegant cursor-pointer group ${c.theme}"><div class="z-10"><h3 class="text-xl font-bold mb-1">${c.name}</h3><span class="text-xs opacity-60 font-medium tracking-wider">MANAGE</span></div><div class="self-end mt-4 text-slate-300 group-hover:text-current transition-colors"><i data-lucide="arrow-right" class="w-6 h-6"></i></div><i data-lucide="${c.icon}" class="w-24 h-24 cat-icon-bg ${c.iconColor}"></i></div>`).join('')}</div></div>`;
+                // --- Filter logic for Suppliers ---
+                if (isSupplier) {
+                    const myProducts = state.products.filter(p => p.supplierName === state.currentUser.name);
+                    const myCatIds = [...new Set(myProducts.map(p => p.category))];
+                    displayCats = allCats.filter(c => myCatIds.includes(c.id));
+                }
+                
+                return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col pt-20 md:pt-8"><div class="flex justify-between items-center mb-6"><h2 class="text-2xl font-bold text-slate-800">產品管理</h2><button onclick="window.openProductModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center shadow-sm"><i data-lucide="plus" class="w-4 h-4 mr-2"></i> 新增產品</button></div><div class="category-grid">${displayCats.map(c => `<div onclick="window.setProductNav('${isSupplier?'list':'supplier'}', '${c.id}')" class="category-card-elegant cursor-pointer group ${c.theme}"><div class="z-10"><h3 class="text-xl font-bold mb-1">${c.name}</h3><span class="text-xs opacity-60 font-medium tracking-wider">MANAGE</span></div><div class="self-end mt-4 text-slate-300 group-hover:text-current transition-colors"><i data-lucide="arrow-right" class="w-6 h-6"></i></div><i data-lucide="${c.icon}" class="w-24 h-24 cat-icon-bg ${c.iconColor}"></i></div>`).join('')}${displayCats.length === 0 ? `<div class="col-span-full text-center py-10 text-slate-400">目前沒有任何產品類別，請點擊右上角新增產品。</div>` : ''}</div></div>`;
             }
 
             // VIEW: Suppliers (Admin Only)
@@ -988,7 +1156,7 @@
                 products = products.filter(p => (p.supplierName || '自有') === state.productNav.supplier);
             }
             
-            return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col pt-20 md:pt-8"><div class="flex justify-between items-center mb-4"><h2 class="text-2xl font-bold text-slate-800">產品列表</h2><div class="flex gap-2"><button onclick="window.setProductNav('${isSupplier?'category':'supplier'}', '${state.productNav.category}', '${state.productNav.supplier}')" class="text-slate-500 hover:text-slate-700 flex items-center px-3 py-2 border rounded bg-white"><i data-lucide="arrow-left" class="w-4 h-4 mr-1"></i> 返回</button><button onclick="window.openProductModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center shadow-sm"><i data-lucide="plus" class="w-4 h-4 mr-2"></i> 新增</button></div></div>${breadcrumbs}<div class="bg-white rounded-xl shadow-sm border border-slate-200 flex-1 overflow-hidden flex flex-col"><div class="overflow-x-auto custom-scrollbar flex-1"><table class="w-full text-left text-sm"><thead class="bg-slate-50 text-slate-600 border-b border-slate-200 sticky top-0 z-10"><tr><th class="p-4">圖片</th><th class="p-4">型號 / 規格</th><th class="p-4">供應商</th><th class="p-4 text-right">成本</th><th class="p-4 text-right">售價(含稅)</th><th class="p-4 text-center">庫存</th><th class="p-4 text-center">操作</th></tr></thead><tbody class="divide-y divide-slate-100">${products.map(p => `<tr class="hover:bg-slate-50"><td class="p-4"><div class="w-10 h-10 rounded bg-slate-100 flex items-center justify-center overflow-hidden border border-slate-200">${p.imageUrl ? `<img src="${p.imageUrl}" class="w-full h-full object-cover">` : `<i data-lucide="box" class="w-5 h-5 text-slate-300"></i>`}</div></td><td class="p-4"><div class="font-bold text-slate-800">${p.name}</div><div class="text-xs text-slate-400">${p.spec || ''}</div></td><td class="p-4 text-slate-600 font-medium">${p.supplierName || '自有'}</td><td class="p-4 text-right text-slate-500">${formatMoney(p.cost)}</td><td class="p-4 text-right font-bold text-slate-700">${formatMoney(p.priceAfterTax)}</td><td class="p-4 text-center"><span class="${p.stock < (p.safeStock||5) ? 'text-red-500 font-bold' : 'text-slate-600'}">${p.stock}</span></td><td class="p-4 text-center"><div class="flex items-center justify-center gap-2"><button onclick="window.openProductModal('${p.id}')" class="text-blue-600 hover:bg-blue-50 p-2 rounded"><i data-lucide="edit-2" class="w-4 h-4"></i></button><button onclick="window.deleteProduct(event, '${p.docId}')" class="text-red-600 hover:bg-red-50 p-2 rounded transition-colors"><i data-lucide="trash-2" class="w-4 h-4"></i></button></div></td></tr>`).join('')}${products.length === 0 ? '<tr><td colspan="7" class="p-8 text-center text-slate-400">列表為空</td></tr>' : ''}</tbody></table></div></div></div>`;
+            return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col pt-20 md:pt-8"><div class="flex justify-between items-center mb-4"><h2 class="text-2xl font-bold text-slate-800">產品列表</h2><div class="flex gap-2"><button onclick="window.setProductNav('${isSupplier?'category':'supplier'}', '${state.productNav.category}', '${state.productNav.supplier}')" class="text-slate-500 hover:text-slate-700 flex items-center px-3 py-2 border rounded bg-white"><i data-lucide="arrow-left" class="w-4 h-4 mr-1"></i> 返回</button><button onclick="window.openProductModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center shadow-sm"><i data-lucide="plus" class="w-4 h-4 mr-2"></i> 新增</button></div></div>${breadcrumbs}<div class="bg-white rounded-xl shadow-sm border border-slate-200 flex-1 overflow-hidden flex flex-col"><div class="overflow-x-auto custom-scrollbar flex-1"><table class="w-full text-left text-sm"><thead class="bg-slate-50 text-slate-600 border-b border-slate-200 sticky top-0 z-10"><tr><th class="p-4">圖片</th><th class="p-4">型號 / 規格</th><th class="p-4">供應商</th><th class="p-4 text-right">成本</th><th class="p-4 text-right">售價(未稅)</th><th class="p-4 text-right">售價(含稅)</th><th class="p-4 text-center">庫存</th><th class="p-4 text-center">操作</th></tr></thead><tbody class="divide-y divide-slate-100">${products.map(p => `<tr class="hover:bg-slate-50"><td class="p-4"><div class="w-10 h-10 rounded bg-slate-100 flex items-center justify-center overflow-hidden border border-slate-200">${p.imageUrl ? `<img src="${p.imageUrl}" class="w-full h-full object-cover">` : `<i data-lucide="box" class="w-5 h-5 text-slate-300"></i>`}</div></td><td class="p-4"><div class="font-bold text-slate-800">${p.name}</div><div class="text-xs text-slate-400">${p.spec || ''}</div></td><td class="p-4 text-slate-600 font-medium">${p.supplierName || '自有'}</td><td class="p-4 text-right text-slate-500">${formatMoney(p.cost)}</td><td class="p-4 text-right font-medium text-slate-600">${formatMoney(p.price)}</td><td class="p-4 text-right font-bold text-slate-700">${formatMoney(p.priceAfterTax)}</td><td class="p-4 text-center"><span class="${p.stock < (p.safeStock||5) ? 'text-red-500 font-bold' : 'text-slate-600'}">${p.stock}</span></td><td class="p-4 text-center"><div class="flex items-center justify-center gap-2"><button onclick="window.openProductModal('${p.id}')" class="text-blue-600 hover:bg-blue-50 p-2 rounded"><i data-lucide="edit-2" class="w-4 h-4"></i></button><button onclick="window.deleteProduct(event, '${p.docId}')" class="text-red-600 hover:bg-red-50 p-2 rounded transition-colors"><i data-lucide="trash-2" class="w-4 h-4"></i></button></div></td></tr>`).join('')}${products.length === 0 ? '<tr><td colspan="8" class="p-8 text-center text-slate-400">列表為空</td></tr>' : ''}</tbody></table></div></div></div>`;
         }
 
         function renderOrders() {
@@ -1012,20 +1180,22 @@
                 );
             }
 
-            return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col pt-20 md:pt-8"><div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6"><h2 class="text-2xl font-bold text-slate-800">訂單管理</h2>${isAdmin ? `<div class="flex items-center gap-2 bg-white p-1 rounded-lg border border-slate-200 shadow-sm"><button onclick="window.setView('orders','all')" class="px-3 py-1 rounded-md text-sm font-medium transition-colors ${state.orderFilter==='all'?'bg-slate-800 text-white':'text-slate-500 hover:bg-slate-50'}">全部</button><button onclick="window.setView('orders','pending')" class="px-3 py-1 rounded-md text-sm font-medium transition-colors ${state.orderFilter==='pending'?'bg-slate-800 text-white':'text-slate-500 hover:bg-slate-50'}">待出貨</button><button onclick="window.setView('orders','unpaid')" class="px-3 py-1 rounded-md text-sm font-medium transition-colors ${state.orderFilter==='unpaid'?'bg-slate-800 text-white':'text-slate-500 hover:bg-slate-50'}">未收款</button></div>` : ''}</div>${isAdmin ? `<div class="mb-4 flex gap-2"><input type="text" oninput="window.setOrderSearch(this.value)" placeholder="搜尋訂單、客戶、產品、供應商..." class="border border-slate-300 rounded-lg px-4 py-2 text-sm w-full md:w-96"><button onclick="window.openAdminOrderModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow hover:bg-blue-700 flex-shrink-0">代客下單</button></div>` : ''}<div class="bg-white rounded-xl shadow-sm border border-slate-200 flex-1 overflow-hidden flex flex-col"><div class="overflow-x-auto custom-scrollbar flex-1"><table class="w-full text-left text-sm"><thead class="bg-slate-50 text-slate-600 border-b border-slate-200 sticky top-0 z-10"><tr><th class="p-4">訂單號</th><th class="p-4">日期</th>${isAdmin ? '<th class="p-4">客戶</th>' : ''}<th class="p-4">產品類別</th><th class="p-4">規格 / 型號</th><th class="p-4 text-right">金額</th><th class="p-4 text-center">狀態</th><th class="p-4 text-center">付款</th>${isAdmin ? '<th class="p-4 text-center">操作</th>' : ''}</tr></thead><tbody class="divide-y divide-slate-100">${orders.map(o => {
+            return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col pt-20 md:pt-8"><div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6"><h2 class="text-2xl font-bold text-slate-800">訂單管理</h2>${isAdmin ? `<div class="flex items-center gap-2 bg-white p-1 rounded-lg border border-slate-200 shadow-sm"><button onclick="window.setView('orders','all')" class="px-3 py-1 rounded-md text-sm font-medium transition-colors ${state.orderFilter==='all'?'bg-slate-800 text-white':'text-slate-500 hover:bg-slate-50'}">全部</button><button onclick="window.setView('orders','pending')" class="px-3 py-1 rounded-md text-sm font-medium transition-colors ${state.orderFilter==='pending'?'bg-slate-800 text-white':'text-slate-500 hover:bg-slate-50'}">待出貨</button><button onclick="window.setView('orders','unpaid')" class="px-3 py-1 rounded-md text-sm font-medium transition-colors ${state.orderFilter==='unpaid'?'bg-slate-800 text-white':'text-slate-500 hover:bg-slate-50'}">未收款</button></div>` : ''}</div>${isAdmin ? `<div class="mb-4 flex gap-2"><input type="text" oninput="window.setOrderSearch(this.value)" placeholder="搜尋訂單、客戶、產品、供應商..." class="border border-slate-300 rounded-lg px-4 py-2 text-sm w-full md:w-96"><button onclick="window.openAdminOrderModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow hover:bg-blue-700 flex-shrink-0">代客下單</button></div>` : ''}<div class="bg-white rounded-xl shadow-sm border border-slate-200 flex-1 overflow-hidden flex flex-col"><div class="overflow-x-auto custom-scrollbar flex-1"><table class="w-full text-left text-sm"><thead class="bg-slate-50 text-slate-600 border-b border-slate-200 sticky top-0 z-10"><tr><th class="p-4">訂單號</th><th class="p-4">日期</th>${isAdmin ? '<th class="p-4">客戶</th>' : ''}<th class="p-4">產品類別</th><th class="p-4">規格 / 型號</th><th class="p-4 text-right">金額</th><th class="p-4 text-center">狀態</th><th class="p-4 text-center">付款</th><th class="p-4 text-center">操作</th></tr></thead><tbody class="divide-y divide-slate-100">${orders.map(o => {
                 const firstItem = o.items[0];
                 const product = state.products.find(p => p.id === firstItem.productId.replace('_printed',''));
                 const category = firstItem.category ? CAT_MAP[firstItem.category] : (product ? CAT_MAP[product.category] : '-');
                 const spec = firstItem.spec || (product ? (product.spec||product.name) : firstItem.name);
-                return `<tr class="hover:bg-slate-50 group cursor-pointer" onclick="${isAdmin ? `window.openOrderEditModal(event, '${o.id}')` : ''}"><td class="p-4 font-mono text-slate-500 text-xs">${o.id}</td><td class="p-4 text-slate-500">${o.date}</td>${isAdmin ? `<td class="p-4 font-bold text-slate-800">${o.clientName}</td>` : ''}<td class="p-4 text-slate-600 font-medium">${category}</td><td class="p-4 text-slate-600"><div class="truncate max-w-[150px]">${spec}</div>${o.items.length>1?` <span class="text-xs bg-gray-100 rounded px-1">+${o.items.length-1}</span>`:''}${o.orderNote ? `<div class="text-xs text-orange-500 mt-1"><i data-lucide="message-square" class="w-3 h-3 inline mr-1"></i>${o.orderNote}</div>` : ''}</td><td class="p-4 text-right font-bold text-slate-700">${formatMoney(o.totalAmount)}</td><td class="p-4 text-center"><span class="px-2 py-1 rounded text-xs font-bold ${o.status==='completed'?'bg-emerald-100 text-emerald-700':'bg-yellow-100 text-yellow-700'}">${o.status==='completed'?'已出貨':'待出貨'}</span></td><td class="p-4 text-center"><span class="px-2 py-1 rounded text-xs font-bold ${o.paymentStatus==='paid'?'bg-blue-100 text-blue-700':'bg-red-100 text-red-700'}">${o.paymentStatus==='paid'?'已付款':'未付款'}</span></td>${isAdmin ? `<td class="p-4 text-center" onclick="event.stopPropagation()"><div class="flex items-center justify-center gap-2">${o.status !== 'completed' ? `<button onclick="window.openShipmentModal('${o.docId}')" class="bg-slate-800 text-white px-2 py-1 rounded text-xs hover:bg-slate-900">出貨</button>` : ''}${o.paymentStatus !== 'paid' ? `<button onclick="window.openPaymentModal('${o.docId}')" class="bg-blue-600 text-white px-2 py-1 rounded text-xs hover:bg-blue-700">入帳</button>` : ''}<button onclick="window.deleteOrder(event, '${o.docId}')" class="bg-red-50 text-red-600 p-1.5 rounded hover:bg-red-100 border border-red-200" title="刪除訂單"><i data-lucide="trash-2" class="w-4 h-4"></i></button></div></td>` : ''}</tr>`;
-            }).join('')}${orders.length === 0 ? `<tr><td colspan="${isAdmin?9:7}" class="p-8 text-center text-slate-400">沒有符合的訂單</td></tr>` : ''}</tbody></table></div></div></div>`;
+                const isPending = o.status === 'pending';
+                
+                return `<tr class="hover:bg-slate-50 group cursor-pointer" onclick="${isAdmin ? `window.openOrderEditModal(event, '${o.id}')` : ''}"><td class="p-4 font-mono text-slate-500 text-xs">${o.id}</td><td class="p-4 text-slate-500">${o.date}</td>${isAdmin ? `<td class="p-4 font-bold text-slate-800">${o.clientName}</td>` : ''}<td class="p-4 text-slate-600 font-medium">${category}</td><td class="p-4 text-slate-600"><div class="truncate max-w-[150px]">${spec}</div>${o.items.length>1?` <span class="text-xs bg-gray-100 rounded px-1">+${o.items.length-1}</span>`:''}${o.orderNote ? `<div class="text-xs text-orange-500 mt-1"><i data-lucide="message-square" class="w-3 h-3 inline mr-1"></i>${o.orderNote}</div>` : ''}</td><td class="p-4 text-right font-bold text-slate-700">${formatMoney(o.totalAmount)}</td><td class="p-4 text-center"><span class="px-2 py-1 rounded text-xs font-bold ${o.status==='completed'?'bg-emerald-100 text-emerald-700':'bg-yellow-100 text-yellow-700'}">${o.status==='completed'?'已出貨':'待出貨'}</span></td><td class="p-4 text-center"><span class="px-2 py-1 rounded text-xs font-bold ${o.paymentStatus==='paid'?'bg-blue-100 text-blue-700':'bg-red-100 text-red-700'}">${o.paymentStatus==='paid'?'已付款':'未付款'}</span></td><td class="p-4 text-center" onclick="event.stopPropagation()"><div class="flex items-center justify-center gap-2">${isAdmin ? (o.status !== 'completed' ? `<button onclick="window.openShipmentModal('${o.docId}')" class="bg-slate-800 text-white px-2 py-1 rounded text-xs hover:bg-slate-900">出貨</button>` : '') + (o.paymentStatus !== 'paid' ? `<button onclick="window.openPaymentModal('${o.docId}')" class="bg-blue-600 text-white px-2 py-1 rounded text-xs hover:bg-blue-700">入帳</button>` : '') + `<button onclick="window.deleteOrder(event, '${o.docId}')" class="bg-red-50 text-red-600 p-1.5 rounded hover:bg-red-100 border border-red-200" title="刪除訂單"><i data-lucide="trash-2" class="w-4 h-4"></i></button>` : (isPending ? `<button onclick="window.openOrderEditModal(event, '${o.id}')" class="text-blue-600 hover:bg-blue-50 p-2 rounded transition-colors" title="修改訂單內容：僅限待出貨狀態可修改"><i data-lucide="edit-2" class="w-4 h-4"></i></button><button onclick="window.deleteOrder(event, '${o.docId}')" class="text-red-600 hover:bg-red-50 p-2 rounded transition-colors" title="取消訂單：永久刪除此筆訂單"><i data-lucide="trash-2" class="w-4 h-4"></i></button>` : `<span class="text-xs text-slate-400 cursor-help" title="訂單已出貨或處理中，無法修改">已鎖定</span>`)}</div></td></tr>`;
+            }).join('')}${orders.length === 0 ? `<tr><td colspan="${isAdmin?9:9}" class="p-8 text-center text-slate-400">沒有符合的訂單</td></tr>` : ''}</tbody></table></div></div></div>`;
         }
 
         // --- Order Edit Modal for Boss ---
         function renderOrderEditModal() {
              if (!state.showOrderEditModal || !state.activeEditingOrder) return '';
              const o = state.activeEditingOrder;
-             return `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4"><div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden animate-fade-in max-h-[90vh] overflow-y-auto custom-scrollbar mobile-modal"><div class="p-5 border-b bg-gray-50 flex justify-between items-center sticky top-0"><h3 class="font-bold text-lg text-slate-800">編輯訂單內容 (${o.id})</h3><button onclick="window.closeOrderEditModal()" class="text-gray-400 hover:text-gray-600"><i data-lucide="x" class="w-6 h-6"></i></button></div><div class="p-6"><div class="mb-4 text-sm text-slate-600"><span class="font-bold mr-2">客戶:</span>${o.clientName}</div><div class="space-y-3">${o.items.map((item, idx) => `<div class="flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-200"><div><div class="font-bold text-slate-700">${item.name}</div><div class="text-xs text-slate-500">${formatMoney(item.price)} / 單位</div></div><div class="flex items-center gap-3"><button onclick="window.updateOrderQty(${idx}, -1)" class="w-8 h-8 rounded-full bg-white border border-slate-300 flex items-center justify-center hover:bg-slate-100">-</button><span class="font-bold text-lg w-12 text-center">${item.qty}</span><button onclick="window.updateOrderQty(${idx}, 1)" class="w-8 h-8 rounded-full bg-white border border-slate-300 flex items-center justify-center hover:bg-slate-100">+</button></div></div>`).join('')}</div><div class="mt-6 flex justify-between items-center pt-4 border-t border-slate-100"><span class="text-slate-500 font-bold">總金額</span><span class="text-2xl font-bold text-blue-600">${formatMoney(o.totalAmount)}</span></div><button onclick="window.saveOrderEdit()" class="w-full bg-blue-600 text-white py-3 rounded-lg font-bold shadow-md hover:bg-blue-700 mt-4">儲存變更</button></div></div></div>`;
+             return `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4"><div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden animate-fade-in max-h-[90vh] overflow-y-auto custom-scrollbar mobile-modal"><div class="p-5 border-b bg-gray-50 flex justify-between items-center sticky top-0"><h3 class="font-bold text-lg text-slate-800" title="可調整商品數量，若需新增品項請重新下單">編輯訂單內容 (${o.id})</h3><button onclick="window.closeOrderEditModal()" class="text-gray-400 hover:text-gray-600"><i data-lucide="x" class="w-6 h-6"></i></button></div><div class="p-6"><div class="mb-4 text-sm text-slate-600"><span class="font-bold mr-2">客戶:</span>${o.clientName}</div><div class="space-y-3">${o.items.map((item, idx) => `<div class="flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-200"><div><div class="font-bold text-slate-700">${item.name}</div><div class="text-xs text-slate-500">${formatMoney(item.price)} / 單位</div></div><div class="flex items-center gap-3"><button onclick="window.updateOrderQty(${idx}, -1)" class="w-8 h-8 rounded-full bg-white border border-slate-300 flex items-center justify-center hover:bg-slate-100" title="減少數量">-</button><span class="font-bold text-lg w-12 text-center">${item.qty}</span><button onclick="window.updateOrderQty(${idx}, 1)" class="w-8 h-8 rounded-full bg-white border border-slate-300 flex items-center justify-center hover:bg-slate-100" title="增加數量">+</button></div></div>`).join('')}</div><div class="mt-6 flex justify-between items-center pt-4 border-t border-slate-100"><span class="text-slate-500 font-bold">總金額</span><span class="text-2xl font-bold text-blue-600">${formatMoney(o.totalAmount)}</span></div><button onclick="window.saveOrderEdit()" class="w-full bg-blue-600 text-white py-3 rounded-lg font-bold shadow-md hover:bg-blue-700 mt-4" title="儲存目前的修改">儲存變更</button></div></div></div>`;
         }
 
         function renderAdminOrderModal() {
@@ -1075,7 +1245,7 @@
 
         function renderClientRepair() {
             const myRepairs = state.repairs.filter(r => r.clientId === state.currentUser.username);
-            return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col gap-6"><div class="flex justify-between items-center"><h2 class="text-2xl font-bold text-slate-800">維修服務中心</h2><button onclick="window.openModal('repair')" class="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 flex items-center shadow-lg"><i data-lucide="wrench" class="w-4 h-4 mr-2"></i> 我要叫修</button></div><div class="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 overflow-y-auto custom-scrollbar p-1">${myRepairs.map(r => `<div onclick="window.openModal('clientRepairDetail', '${r.id}')" class="bg-white rounded-xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition-shadow active:scale-[0.98] cursor-pointer"><div class="flex justify-between items-start mb-3"><span class="px-2 py-1 rounded text-xs font-bold ${r.status==='completed'?'bg-emerald-100 text-emerald-700':(r.status==='processing'?'bg-blue-100 text-blue-700':'bg-orange-100 text-orange-700')}">${r.status==='completed'?'已完修':(r.status==='processing'?'維修中':'待處理')}</span><span class="text-xs text-slate-400">${r.date}</span></div><h3 class="font-bold text-slate-800 mb-2">問題描述：</h3><p class="text-sm text-slate-600 mb-4 bg-slate-50 p-3 rounded-lg line-clamp-2">${r.issue}</p>${r.imageUrl?`<div class="mb-4 h-40 bg-slate-100 rounded-lg overflow-hidden border border-slate-200"><img src="${r.imageUrl}" class="w-full h-full object-cover"></div>`:''}${r.status==='completed'?`<div class="pt-4 border-t border-slate-100 mt-2"><div class="flex justify-between text-sm mb-1"><span class="text-slate-500">診斷</span><span class="font-medium text-slate-800">${r.diagnosis||'已修復'}</span></div><div class="flex justify-between text-sm font-bold"><span class="text-slate-500">維修費用</span><span class="text-red-600">${formatMoney(r.cost)}</span></div></div>`:''}</div>`).join('')}${myRepairs.length===0?`<div class="col-span-full text-center py-20 text-slate-400">尚無維修記錄</div>`:''}</div></div>${state.showRepairModal?`<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4" onclick="if(event.target===this)window.closeModal('repair')"><div class="bg-white rounded-xl shadow-2xl w-full max-w-md animate-fade-in p-6 mobile-modal mobile-modal-content"><div class="flex justify-between items-center mb-6"><h3 class="font-bold text-xl text-slate-800">申請維修服務</h3><button onclick="window.closeModal('repair')" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-6 h-6"></i></button></div><form onsubmit="window.submitRepair(event)" class="space-y-4"><div><label class="block text-sm font-medium text-slate-700 mb-1">問題狀況描述</label><textarea name="issue" rows="4" required class="w-full border border-slate-300 rounded-lg p-3 outline-none" placeholder="請詳細描述機器狀況..."></textarea></div><div><label class="block text-sm font-medium text-slate-700 mb-1">上傳照片/影片截圖</label><label class="border-2 border-dashed border-slate-300 rounded-lg p-4 flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 transition-colors text-slate-400"><i data-lucide="image-plus" class="w-8 h-8 mb-2"></i><span class="text-xs">點擊上傳 (自動壓縮)</span><input type="file" accept="image/*" class="hidden" onchange="window.handleImageUpload(this)" data-target="imageUrlInput" data-preview="repairImagePreview"></label><input type="hidden" id="imageUrlInput" name="imageUrl"><img id="repairImagePreview" class="h-40 w-full object-contain mt-2 hidden rounded-lg bg-slate-100 border border-slate-200"></div><button type="submit" class="w-full py-3 bg-red-600 text-white rounded-lg font-bold shadow-lg hover:bg-red-700 mt-4">送出申請</button></form></div></div>`:''}`;
+            return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col gap-6"><div class="flex justify-between items-center"><h2 class="text-2xl font-bold text-slate-800">維修服務中心</h2><button onclick="window.openModal('repair')" class="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 flex items-center shadow-lg"><i data-lucide="wrench" class="w-4 h-4 mr-2"></i> 我要叫修</button></div><div class="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 overflow-y-auto custom-scrollbar p-1">${myRepairs.map(r => `<div onclick="window.openModal('clientRepairDetail', '${r.id}')" class="bg-white rounded-xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition-shadow active:scale-[0.98] cursor-pointer"><div class="flex justify-between items-start mb-3"><div class="flex items-center gap-2"><span class="px-2 py-1 rounded text-xs font-bold ${r.status==='completed'?'bg-emerald-100 text-emerald-700':(r.status==='processing'?'bg-blue-100 text-blue-700':'bg-orange-100 text-orange-700')}">${r.status==='completed'?'已完修':(r.status==='processing'?'維修中':'待處理')}</span>${r.status==='pending' ? `<button onclick="window.deleteRepair(event, '${r.docId}')" class="text-red-400 hover:text-red-600 p-1 hover:bg-red-50 rounded transition-colors" title="取消叫修"><i data-lucide="trash-2" class="w-4 h-4"></i></button>` : ''}</div><span class="text-xs text-slate-400">${r.date}</span></div><h3 class="font-bold text-slate-800 mb-2">問題描述：</h3><p class="text-sm text-slate-600 mb-4 bg-slate-50 p-3 rounded-lg line-clamp-2">${r.issue}</p>${r.imageUrl?`<div class="mb-4 h-40 bg-slate-100 rounded-lg overflow-hidden border border-slate-200"><img src="${r.imageUrl}" class="w-full h-full object-cover"></div>`:''}${r.status==='completed'?`<div class="pt-4 border-t border-slate-100 mt-2"><div class="flex justify-between text-sm mb-1"><span class="text-slate-500">診斷</span><span class="font-medium text-slate-800">${r.diagnosis||'已修復'}</span></div><div class="flex justify-between text-sm font-bold"><span class="text-slate-500">維修費用</span><span class="text-red-600">${formatMoney(r.cost)}</span></div></div>`:''}</div>`).join('')}${myRepairs.length===0?`<div class="col-span-full text-center py-20 text-slate-400">尚無維修記錄</div>`:''}</div></div>${state.showRepairModal?`<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4" onclick="if(event.target===this)window.closeModal('repair')"><div class="bg-white rounded-xl shadow-2xl w-full max-w-md animate-fade-in p-6 mobile-modal mobile-modal-content"><div class="flex justify-between items-center mb-6"><h3 class="font-bold text-xl text-slate-800">申請維修服務</h3><button onclick="window.closeModal('repair')" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-6 h-6"></i></button></div><form onsubmit="window.submitRepair(event)" class="space-y-4"><div><label class="block text-sm font-medium text-slate-700 mb-1">問題狀況描述</label><textarea name="issue" rows="4" required class="w-full border border-slate-300 rounded-lg p-3 outline-none" placeholder="請詳細描述機器狀況..."></textarea></div><div><label class="block text-sm font-medium text-slate-700 mb-1">上傳照片/影片截圖</label><label class="border-2 border-dashed border-slate-300 rounded-lg p-4 flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 transition-colors text-slate-400"><i data-lucide="image-plus" class="w-8 h-8 mb-2"></i><span class="text-xs">點擊上傳 (自動壓縮)</span><input type="file" accept="image/*" class="hidden" onchange="window.handleImageUpload(this)" data-target="imageUrlInput" data-preview="repairImagePreview"></label><input type="hidden" id="imageUrlInput" name="imageUrl"><img id="repairImagePreview" class="h-40 w-full object-contain mt-2 hidden rounded-lg bg-slate-100 border border-slate-200"></div><button type="submit" class="w-full py-3 bg-red-600 text-white rounded-lg font-bold shadow-lg hover:bg-red-700 mt-4">送出申請</button></form></div></div>`:''}`;
         }
 
         function renderShop() {
@@ -1100,10 +1270,26 @@
             return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col relative"><div class="flex justify-between items-center mb-6"><div class="flex items-center gap-4"><button onclick="window.setCategory(null)" class="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center hover:bg-slate-50 text-slate-600 transition-colors shadow-sm"><i data-lucide="arrow-left" class="w-5 h-5"></i></button><h2 class="text-2xl font-bold text-slate-800">${catNameMap[state.activeCategory]}</h2></div><button onclick="window.updateCartModal(true)" class="relative bg-white border border-slate-200 text-slate-600 p-3 rounded-full shadow-sm hover:shadow-md transition-all"><i data-lucide="shopping-cart" class="w-6 h-6"></i>${cartCount>0?`<span class="absolute -top-1 -right-1 bg-red-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold shadow-sm">${cartCount}</span>`:''}</button></div><div class="product-grid pb-20 overflow-y-auto custom-scrollbar p-1">${visible.map(p => {
                 const isPaper = p.category === 'paper';
                 const hasPrinting = isPaper && p.hasPrinting;
-                let displayMinQty = p.minOrderQty || 1;
-                if (isPaper) displayMinQty = (p.paperSpec === '7cm_folded') ? 20 : (p.paperSpec === '14cm_unfolded' ? 8 : 1);
+                let rollsPerBox = (isPaper && p.rollsPerBox > 0) ? p.rollsPerBox : 1;
+                
+                // Initialize default MOQ logic for display
+                let minQty = p.minOrderQty || 1;
+                if (isPaper) {
+                     // Default blank: 7cm -> 20 rolls, 14cm -> 8 rolls
+                     // Default display logic same as updateShopCard initial state
+                     let minRolls = (p.paperSpec === '7cm_folded') ? 20 : 8;
+                     minQty = Math.ceil(minRolls / rollsPerBox);
+                }
+                
+                // Initial Price Display (Per Box if Paper)
+                let initialPrice = p.price; // Use pre-tax price as requested
+                let unitLabel = "個";
+                if(isPaper) {
+                    initialPrice = p.price * rollsPerBox;
+                    unitLabel = "箱";
+                }
 
-                return `<div class="product-card bg-white rounded-xl border border-slate-200 p-4 flex flex-col h-full hover:border-blue-200 group"><div class="img-container mb-4 group-hover:opacity-90 transition-opacity">${p.imageUrl?`<img src="${p.imageUrl}" class="w-full h-full object-cover">`:`<i data-lucide="${p.imageIcon}" class="w-12 h-12 text-slate-300"></i>`}</div><div class="mb-auto"><h3 class="font-bold text-slate-800 text-lg leading-tight mb-1">${p.name}</h3>${p.spec ? `<p class="text-sm text-slate-500">${p.spec}</p>` : ''}${p.paperSpec ? `<p class="text-xs bg-gray-100 inline-block px-1 rounded text-slate-600 mt-1">${p.paperSpec==='7cm_folded'?'7公分對折':'14公分不對折'}</p>` : ''}</div><div class="mt-4 pt-4 border-t border-slate-100">${hasPrinting ? `<div class="mb-3 p-2 bg-blue-50 rounded border border-blue-100"><label class="flex items-center cursor-pointer"><input type="checkbox" id="print-${p.id}" class="w-4 h-4 text-blue-600 rounded focus:ring-blue-500" onchange="window.togglePrintingOption('${p.id}', this)"><span class="ml-2 text-sm font-bold text-blue-800">需要印刷?</span></label><div class="text-[10px] text-blue-600 mt-1" id="moq-hint-${p.id}"></div></div>` : ''}<div class="flex flex-col gap-3"><div class="flex justify-between items-baseline"><span class="text-xl font-bold text-slate-700 font-mono" id="price-${p.id}">${formatMoney(p.priceAfterTax)}</span><span class="text-[10px] text-slate-400 font-bold" id="moq-${p.id}">MOQ: ${displayMinQty}</span></div><div class="flex items-center gap-2"><div class="flex items-center border rounded-lg bg-slate-50"><button onclick="window.adjustShopQty('${p.id}', -1)" class="px-3 py-1 hover:bg-slate-200 text-slate-600">-</button><input type="number" id="qty-${p.id}" value="${displayMinQty}" min="${displayMinQty}" class="w-12 text-center bg-transparent outline-none text-sm font-bold"><button onclick="window.adjustShopQty('${p.id}', 1)" class="px-3 py-1 hover:bg-slate-200 text-slate-600">+</button></div><button onclick="window.addToCart('${p.id}', 'qty-${p.id}', 'print-${p.id}')" class="flex-1 bg-slate-900 hover:bg-slate-800 text-white py-2 rounded-lg text-sm font-bold shadow-lg transition-transform active:scale-95">我要訂購</button></div></div></div></div>`; }).join('')}</div></div>${renderCartModal()}`;
+                return `<div class="product-card bg-white rounded-2xl border border-slate-200 p-4 flex flex-col h-full shadow-sm hover:shadow-md transition-shadow relative overflow-hidden group"><div class="img-container mb-4 group-hover:opacity-90 transition-opacity">${p.imageUrl?`<img src="${p.imageUrl}" class="w-full h-full object-cover">`:`<i data-lucide="${p.imageIcon}" class="w-12 h-12 text-slate-300"></i>`}</div><div class="mb-4"><h3 class="text-lg font-black text-slate-800 leading-tight mb-1">${p.name}</h3>${p.spec ? `<p class="text-sm text-slate-500 font-medium">${p.spec}</p>` : ''}${p.paperSpec ? `<p class="text-xs bg-gray-100 inline-block px-1.5 py-0.5 rounded text-slate-600 mt-1 font-bold tracking-wide">${p.paperSpec==='7cm_folded'?'7公分對折':'14公分不對折'}</p>` : ''}${isPaper ? `<div class="mt-3 w-full bg-blue-50/50 border border-blue-100 rounded-lg py-1.5 px-2 text-center"><span class="text-blue-800 text-xs font-bold block tracking-wide">📦 規格說明：1 箱 = ${rollsPerBox} 卷</span></div>` : ''}</div><div class="mt-auto space-y-4"><div class="space-y-2">${hasPrinting ? `<div class="p-2.5 bg-blue-50/50 rounded-xl border border-blue-100 transition-colors hover:bg-blue-50"><label class="flex items-center cursor-pointer w-full"><input type="checkbox" id="print-${p.id}" class="w-4 h-4 text-blue-600 rounded focus:ring-blue-500" onchange="window.updateShopCard('${p.id}')"><span class="ml-2.5 text-sm font-bold text-blue-800">需要印刷?</span></label></div>` : ''}<label class="flex items-center cursor-pointer px-1 py-1"><input type="checkbox" id="invoice-${p.id}" class="w-4 h-4 text-slate-600 rounded focus:ring-slate-500" onchange="window.updateShopCard('${p.id}')"><span class="ml-2 text-sm text-slate-600 font-bold">索取發票 (+5%)</span></label></div><div class="flex items-end justify-between px-1"><div class="flex flex-col"><span class="text-[10px] text-slate-400 font-bold mb-0.5 uppercase tracking-wider">Price</span><span class="text-2xl font-black text-slate-800 font-mono leading-none" id="price-${p.id}">${formatMoney(initialPrice)}</span></div><div class="flex flex-col items-end"><span class="text-[10px] text-slate-400 font-bold mb-0.5">最低採購</span><span class="text-sm font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md" id="moq-${p.id}">${minQty} ${unitLabel}</span></div></div><div><div class="flex items-center w-full h-12 border border-slate-200 rounded-xl overflow-hidden bg-white shadow-sm relative"><button onclick="window.adjustShopQty('${p.id}', -1)" class="w-12 h-full flex items-center justify-center bg-slate-50 border-r border-slate-100 text-slate-500 hover:text-slate-700 hover:bg-slate-100 active:bg-slate-200 transition-all"><i data-lucide="minus" class="w-5 h-5 stroke-[3]"></i></button><div class="flex-1 h-full flex items-center justify-center relative"><input type="number" id="qty-${p.id}" value="${minQty}" min="${minQty}" class="w-full h-full text-center font-black text-xl text-slate-800 outline-none bg-transparent appearance-none no-spinner z-10 relative" inputmode="numeric"><span class="absolute right-4 text-xs font-bold text-slate-400 pointer-events-none z-0 tracking-widest">${unitLabel}</span></div><button onclick="window.adjustShopQty('${p.id}', 1)" class="w-12 h-full flex items-center justify-center bg-slate-50 border-l border-slate-100 text-slate-500 hover:text-slate-700 hover:bg-slate-100 active:bg-slate-200 transition-all"><i data-lucide="plus" class="w-5 h-5 stroke-[3]"></i></button></div><div id="hint-${p.id}" class="text-[10px] text-center text-slate-400 mt-1.5 h-3 font-medium tracking-wide"></div></div><button onclick="window.addToCart('${p.id}', 'qty-${p.id}', 'print-${p.id}', 'invoice-${p.id}')" class="w-full btn-noble text-white py-3.5 rounded-xl text-base font-bold shadow-lg shadow-blue-900/20 active:scale-[0.98] hover:shadow-xl transition-all flex items-center justify-center gap-2"><i data-lucide="shopping-cart" class="w-5 h-5"></i> 加入購物車</button></div></div>`; }).join('')}</div></div>${renderCartModal()}`;
         }
 
         function renderAdminRepairs() {
@@ -1241,4 +1427,3 @@
         }
     </script>
 </body>
-</html>
