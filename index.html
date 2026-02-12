@@ -1,8 +1,8 @@
-﻿<html lang="zh-TW">
+﻿
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>羅德精技醫材訂貨系統 (Ver 5.6.25 輸入法修復版)</title>
+    <title>羅德精技醫材訂貨系統 (Ver 5.8 UI優化版)</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Lucide Icons -->
@@ -129,6 +129,10 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
+        // --- LINE NOTIFY CONFIGURATION ---
+        // 請將 Google Apps Script 發布後的 Web App URL 填入下方引號中
+        const GAS_API_URL = ""; 
+
         const LOCAL_FIREBASE_CONFIG = {
             apiKey: "AIzaSyCnGvyHtX7BADHQOoCsimWjT191YEgaoJs",
             authDomain: "roadbiomed-28961.firebaseapp.com",
@@ -180,39 +184,31 @@
             'other': '其他支出'
         };
 
-        // --- Global Search & Composition State (Fix for Chinese Typing) ---
-        window.isComposing = false;
-        let searchDebounceTimer = null;
-        
-        const debouncedRender = () => {
-            clearTimeout(searchDebounceTimer);
-            searchDebounceTimer = setTimeout(renderApp, 550); // Wait 550ms before re-rendering
-        };
-
         // --- State ---
         const state = {
             users: [], currentUser: null, currentView: 'login', loginMode: 'select',
             products: [], orders: [], expenses: [], repairs: [],
-            isLoading: true,
+            isLoading: false, 
             viewHistory: [],
             productNav: { view: 'category', category: null, supplier: null }, 
             showProductModal: false, showPaymentModal: false, showExpenseModal: false,
             showRegisterModal: false, showProfileModal: false, showRepairModal: false, showRepairProcessModal: false, 
             showClientRepairDetail: false, showAdminOrderModal: false, showClientHistoryModal: false,
             showShipmentModal: false, showOrderEditModal: false, showHistoryModal: false,
+            showOrderConfirmModal: false, pendingOrderData: null, showForgotModal: false, // New states
             activeShipmentOrder: null, activeEditingOrder: null, 
             registerRole: 'client',
             showImagePreview: false, previewImageUrl: null,
             activePaymentOrderDocId: null, activeRepairId: null, editingProduct: null, editingExpense: null,
             activeCategory: null, activeCity: null, activeClientRepair: null,
             activeHistoryClient: null, activeHistorySupplier: null, historyViewType: 'client',
-            historyTab: 'orders', // orders, repairs, products
+            historyTab: 'orders', 
             dashboardView: 'main',
             crmView: 'type', crmType: 'client', crmSearch: '',
             orderFilter: 'all', orderSearch: '',
             adminOrderDraft: { clientId: '', items: [] },
             adminOrderFilters: { clientCity: '', clientSearch: '', prodCategory: '', prodSupplier: '', prodId: '' },
-            repairAdminTab: 'pending' // pending or history
+            repairAdminTab: 'pending' 
         };
 
         // --- Helpers ---
@@ -239,6 +235,121 @@
             if (category === 'machine') return '台';
             if (category === 'paper') return '箱';
             return '個';
+        };
+
+        const sendBackendNotification = async (payload) => {
+            if (!GAS_API_URL) return; 
+            try {
+                await fetch(GAS_API_URL, {
+                    method: 'POST',
+                    mode: 'no-cors', 
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                console.log("Notification sent:", payload.type);
+            } catch (error) {
+                console.error("Failed to send notification:", error);
+            }
+        };
+
+        // --- Partial Refresh & Search Logic ---
+        window.handleOrderSearch = (val) => {
+            state.orderSearch = val;
+            window.refreshOrderListUI();
+        };
+
+        window.refreshOrderListUI = () => {
+            const tbody = document.getElementById('orderListBody');
+            if (tbody) {
+                tbody.innerHTML = window.generateOrderRows();
+                lucide.createIcons();
+            }
+        };
+
+        window.generateOrderRows = () => {
+            const isAdmin = state.currentUser.role === 'admin';
+            const isSupplier = state.currentUser.role === 'supplier';
+            
+            let orders = [];
+            if (isAdmin) {
+                orders = state.orders;
+            } else if (isSupplier) {
+                // 供應商只看包含自己產品的訂單
+                orders = state.orders.filter(o => o.items.some(i => (i.supplierName || '自有') === state.currentUser.name));
+            } else {
+                orders = state.orders.filter(o => o.clientId === state.currentUser.username);
+            }
+            
+            if ((isAdmin || isSupplier) && state.orderFilter !== 'all') {
+                if(state.orderFilter === 'pending') orders = orders.filter(o => o.status === 'pending');
+                else if(state.orderFilter === 'unpaid') orders = orders.filter(o => o.paymentStatus === 'unpaid');
+            }
+            
+            if (state.orderSearch) {
+                const term = state.orderSearch.toLowerCase();
+                orders = orders.filter(o => o.id.toLowerCase().includes(term) || o.clientName.toLowerCase().includes(term) || o.items.some(i => i.name.toLowerCase().includes(term) || (i.category && CAT_MAP[i.category] && CAT_MAP[i.category].includes(term)) || (i.supplierName && i.supplierName.toLowerCase().includes(term))));
+            }
+
+            if (orders.length === 0) return `<tr><td colspan="${(isAdmin || isSupplier) ? 9 : 8}" class="p-8 text-center text-slate-400">沒有符合的訂單</td></tr>`;
+
+            return orders.map(o => { 
+                const firstItem = o.items[0]; 
+                const product = state.products.find(p => p.id === firstItem.productId.replace('_printed','')); 
+                const category = firstItem.category ? CAT_MAP[firstItem.category] : (product ? CAT_MAP[product.category] : '-'); 
+                const spec = firstItem.spec || (product ? (product.spec||product.name) : firstItem.name); 
+                const isPending = o.status === 'pending';
+                let paperNote = '';
+                if (isAdmin && o.items.some(i => i.category === 'paper')) {
+                    const client = state.users.find(u => u.username === o.clientId);
+                    if (client && client.paperSpecNote) {
+                        paperNote = `<div class="text-[10px] text-blue-600 bg-blue-50 border border-blue-100 rounded px-1.5 py-0.5 mt-1 inline-block"><i data-lucide="info" class="w-3 h-3 inline mr-0.5"></i>規格: ${client.paperSpecNote}</div>`;
+                    }
+                }
+                
+                let actionHtml = '';
+                if (isAdmin) {
+                    actionHtml = (o.status !== 'completed' ? `<button onclick="window.openShipmentModal('${o.docId}')" class="bg-slate-800 text-white px-2 py-1 rounded text-xs hover:bg-slate-900 shadow">出貨</button>` : `<button onclick="window.revertShipment(event, '${o.docId}')" class="bg-gray-200 text-gray-600 px-2 py-1 rounded text-xs hover:bg-gray-300">取消出貨</button>`) + 
+                                 (o.paymentStatus !== 'paid' ? `<button onclick="window.openPaymentModal('${o.docId}')" class="bg-blue-600 text-white px-2 py-1 rounded text-xs hover:bg-blue-700 shadow">入帳</button>` : `<button onclick="window.revertPayment(event, '${o.docId}')" class="bg-gray-200 text-gray-600 px-2 py-1 rounded text-xs hover:bg-gray-300">取消入帳</button>`) + 
+                                 `<button onclick="window.deleteOrder(event, '${o.docId}')" class="bg-red-50 text-red-600 p-1.5 rounded hover:bg-red-100 border border-red-200" title="刪除訂單"><i data-lucide="trash-2" class="w-4 h-4"></i></button>`;
+                } else if (isSupplier) {
+                    actionHtml = (o.status !== 'completed' ? `<button onclick="window.openShipmentModal('${o.docId}')" class="bg-slate-800 text-white px-2 py-1 rounded text-xs hover:bg-slate-900 shadow">出貨</button>` : `<button onclick="window.revertShipment(event, '${o.docId}')" class="bg-gray-200 text-gray-600 px-2 py-1 rounded text-xs hover:bg-gray-300">取消出貨</button>`);
+                } else {
+                    actionHtml = isPending ? `<button onclick="window.openOrderEditModal(event, '${o.id}')" class="text-blue-600 hover:bg-blue-50 p-2 rounded transition-colors" title="修改訂單內容：僅限待出貨狀態可修改"><i data-lucide="edit-2" class="w-4 h-4"></i></button><button onclick="window.deleteOrder(event, '${o.docId}')" class="text-red-600 hover:bg-red-50 p-2 rounded transition-colors" title="取消訂單：永久刪除此筆訂單"><i data-lucide="trash-2" class="w-4 h-4"></i></button>` : `<span class="text-xs text-slate-400 cursor-help" title="訂單已出貨或處理中，無法修改">已鎖定</span>`;
+                }
+                
+                return `<tr class="hover:bg-slate-50 group cursor-pointer" onclick="${isAdmin || isSupplier || isPending ? `window.openOrderEditModal(event, '${o.id}')` : ''}"><td class="p-4 font-mono text-slate-500 text-xs">${o.id}</td><td class="p-4 text-slate-500">${o.date}</td>${(isAdmin || isSupplier) ? `<td class="p-4 font-bold text-slate-800">${o.clientName}</td>` : ''}<td class="p-4 text-slate-600 font-medium">${category}</td><td class="p-4 text-slate-600"><div class="truncate max-w-[150px]">${spec}</div>${o.items.length>1?` <span class="text-xs bg-gray-100 rounded px-1">+${o.items.length-1}</span>`:''}${o.orderNote ? `<div class="text-xs text-orange-500 mt-1"><i data-lucide="message-square" class="w-3 h-3 inline mr-1"></i>${o.orderNote}</div>` : ''}${paperNote}</td><td class="p-4 text-right font-bold text-slate-700">${formatMoney(o.totalAmount)}</td><td class="p-4 text-center"><span class="px-2 py-1 rounded text-xs font-bold ${o.status==='completed'?'bg-emerald-100 text-emerald-700':'bg-yellow-100 text-yellow-700'}">${o.status==='completed'?'已出貨':'待出貨'}</span></td><td class="p-4 text-center"><span class="px-2 py-1 rounded text-xs font-bold ${o.paymentStatus==='paid'?'bg-blue-100 text-blue-700':'bg-red-100 text-red-700'}">${o.paymentStatus==='paid'?'已付款':'未付款'}</span></td><td class="p-4 text-center" onclick="event.stopPropagation()"><div class="flex items-center justify-center gap-2">${actionHtml}</div></td></tr>`; 
+            }).join('');
+        };
+
+        window.handleCRMSearch = (val) => { state.crmSearch = val; window.refreshCRMListUI(); };
+        window.refreshCRMListUI = () => { const tbody = document.getElementById('crmListBody'); if (tbody) { tbody.innerHTML = window.generateCRMRows(); lucide.createIcons(); } };
+        window.generateCRMRows = () => {
+            if (state.crmType === 'supplier') {
+                 const suppliers = [...new Set(state.products.map(p => p.supplierName || '自有'))];
+                 const supplierObjs = suppliers.map(s => ({ name: s })); 
+                 const displayList = state.crmSearch ? supplierObjs.filter(s => s.name.includes(state.crmSearch)) : supplierObjs;
+                 return displayList.map(s => `<tr class="hover:bg-slate-50 cursor-pointer" onclick="window.openSupplierHistory('${s.name}')"><td class="p-4 font-bold text-slate-800">${s.name}</td><td class="p-4"><button onclick="event.stopPropagation(); window.openSupplierHistory('${s.name}')" class="text-purple-600 text-xs bg-purple-50 hover:bg-purple-100 px-2 py-1 rounded border border-purple-200 flex items-center gap-1"><i data-lucide="file-text" class="w-3 h-3"></i> 查看訂貨記錄</button></td></tr>`).join('');
+            } else {
+                const targetRole = 'client'; 
+                const targets = state.users.filter(u => u.role === targetRole || (u.type==='clinic'||u.type==='pharmacy'||u.type==='hospital'));
+                const searchFiltered = state.crmSearch ? targets.filter(u => u.name.includes(state.crmSearch) || u.phone.includes(state.crmSearch)) : targets;
+                const displayList = (!state.crmSearch && state.crmView === 'list' && state.activeCity) ? searchFiltered.filter(u => (u.city || '其他') === state.activeCity) : searchFiltered;
+                return displayList.map(u => `<tr class="hover:bg-slate-50 cursor-pointer" onclick="window.openClientHistory('${u.docId}')"><td class="p-4 font-bold text-slate-800">${u.name}</td><td class="p-4"><span class="px-2 py-1 rounded-full bg-slate-100 text-xs font-bold text-slate-600">${u.type || '-'}</span></td><td class="p-4 font-mono text-slate-600">${u.phone}</td><td class="p-4"><div class="flex items-center gap-2">${u.paperRollImageUrl?`<img src="${u.paperRollImageUrl}" class="w-8 h-8 rounded border object-cover">`:''}<span class="text-xs text-slate-500">${u.paperSpecNote||'-'}</span></div></td><td class="p-4"><button onclick="event.stopPropagation(); window.openClientHistory('${u.docId}')" class="text-blue-600 text-xs bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded border border-blue-200 flex items-center gap-1"><i data-lucide="history" class="w-3 h-3"></i> 查看記錄</button></td></tr>`).join('');
+            }
+        };
+
+        window.setAdminClientFilter = (k,v) => { state.adminOrderFilters[k] = v; window.refreshAdminClientSelect(); };
+        window.refreshAdminClientSelect = () => {
+            const sel = document.getElementById('adminClientSelect');
+            if (!sel) return;
+            const allClients = state.users.filter(u => u.role === 'client');
+            let filteredClients = allClients;
+            if(state.adminOrderFilters.clientCity) filteredClients = filteredClients.filter(c => c.city === state.adminOrderFilters.clientCity);
+            if(state.adminOrderFilters.clientSearch) {
+                const term = state.adminOrderFilters.clientSearch.toLowerCase();
+                filteredClients = filteredClients.filter(c => c.name.toLowerCase().includes(term) || c.phone.includes(term));
+            }
+            sel.innerHTML = `<option value="">-- 請選擇客戶 (${filteredClients.length}) --</option>` + filteredClients.map(c => `<option value="${c.id}" ${state.adminOrderDraft.clientId===c.id?'selected':''}>${c.name} (${c.city}) - ${c.phone}</option>`).join('');
         };
 
         // --- Global Functions ---
@@ -326,19 +437,26 @@
                         const docData = d.data();
                         return { ...docData, id: docData.id || d.id, docId: d.id };
                     });
-                    if(col==='orders') state.orders = data.sort((a,b)=>new Date(b.date)-new Date(a.date));
+                    if(col==='orders') {
+                        state.orders = data.sort((a,b)=>new Date(b.date)-new Date(a.date));
+                        window.refreshOrderListUI(); 
+                    }
                     else if(col==='repairs') state.repairs = data.sort((a,b)=>b.createdAt - a.createdAt);
                     else if(col==='expenses') state.expenses = data.sort((a,b)=>new Date(b.date)-new Date(a.date));
-                    else state[col] = data;
-                    if(col==='users') {
+                    else if(col==='products') state.products = data;
+                    else if(col==='users') {
+                        state.users = data;
                         state.isLoading = false; 
                         if(state.currentUser) state.currentUser = data.find(u=>u.username===state.currentUser.username) || state.currentUser;
                         if (state.activeHistoryClient && state.showHistoryModal) {
                             state.activeHistoryClient = data.find(u => u.docId === state.activeHistoryClient.docId) || state.activeHistoryClient;
-                            renderApp();
                         }
+                        window.refreshCRMListUI(); 
                     }
-                    if(!window.isComposing) renderApp(); // Only render if not typing
+                    const focused = document.activeElement;
+                    if (!focused || (focused.tagName !== 'INPUT' && focused.tagName !== 'TEXTAREA')) {
+                        renderApp();
+                    }
                 }, err => { console.error(err); state.isLoading = false; renderApp(); });
             });
         };
@@ -355,13 +473,13 @@
             onAuthStateChanged(auth, u => { if(u) initDataListeners(); });
         }
 
-        // --- Login Logic ---
+        // --- Auth Logic ---
         window.setLoginMode = m => { state.loginMode = m; renderApp(); };
         window.handleLogin = e => {
             e.preventDefault(); 
             if(!isConfigured) return alert("請設定 Firebase");
+            if(state.users.length === 0) return showToast("正在與雲端資料庫同步中，請稍等 3-5 秒後再試...", "orange");
             if(state.isLoading) return showToast("系統資料載入中，請稍候再試...", "error");
-            if(state.users.length === 0 && !state.isLoading) return showToast("目前系統無任何帳號，請先點擊下方註冊", "error");
             
             const f = e.target;
             const inputUser = f.username.value.trim();
@@ -376,7 +494,32 @@
             state.currentView = u.role==='admin' ? 'dashboard' : (u.role==='supplier' ? 'products' : 'shop');
             showToast(`歡迎回來 ${u.name}`); renderApp();
         };
+
+        // --- Forgot Password Logic ---
+        window.openForgotModal = () => { state.showForgotModal = true; renderApp(); };
+        window.closeForgotModal = () => { state.showForgotModal = false; renderApp(); };
+        window.handleForgot = async (e) => {
+            e.preventDefault();
+            const f = e.target;
+            const username = f.username.value.trim();
+            const phone = f.phone.value.trim();
+            const newPassword = f.newPassword.value.trim();
+            
+            const user = state.users.find(u => u.username === username && u.phone === phone);
+            if (!user) return showToast('找不到符合的帳號或註冊電話，請確認後再試', 'error');
+            
+            try {
+                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.docId), { password: newPassword });
+                showToast('密碼已成功重設，請使用新密碼登入');
+                state.showForgotModal = false;
+                renderApp();
+            } catch(err) {
+                console.error(err);
+                showToast('密碼重設失敗: ' + err.message, 'error');
+            }
+        };
         
+        // --- Modals & Navigation ---
         window.openModal = (type, id=null) => {
             if (type === 'repair') state.showRepairModal = true;
             else if (type === 'profile') state.showProfileModal = true;
@@ -421,16 +564,6 @@
         window.setProductNav = (view, cat=null, sup=null) => { state.productNav.view = view; if (cat) state.productNav.category = cat; if (sup) state.productNav.supplier = sup; renderApp(); };
         window.setCategory = (c) => { state.activeCategory = c; renderApp(); };
         window.setCRMView = (v, type=null, city=null) => { state.crmView = v; if(type) state.crmType = type; if(city) state.activeCity = city; state.crmSearch = ''; renderApp(); };
-        
-        // --- UPDATED Search Functions with Debounce ---
-        window.setOrderSearch = (v) => { 
-            state.orderSearch = v; 
-            if(!window.isComposing) debouncedRender(); 
-        };
-        window.setCRMSearch = (v) => { 
-            state.crmSearch = v; 
-            if(!window.isComposing) debouncedRender();
-        };
         
         window.setDashboardView = (v) => { state.dashboardView = v; renderApp(); };
         window.setRepairAdminTab = (t) => { state.repairAdminTab = t; renderApp(); };
@@ -485,7 +618,6 @@
             const val = e.target.value;
             const isAdmin = state.currentUser.role === 'admin';
 
-            // Security check: Clients shouldn't be here for date/rolls, but double check
             if (!isAdmin && (field === 'date' || field === 'rollQty')) return;
 
             if (field === 'date') {
@@ -502,8 +634,6 @@
                     item.qty = parseFloat(val) || 1;
                 } else if (field === 'rollQty') {
                     const rolls = parseFloat(val) || 0;
-                    // Logic: If rolls are insufficient for 1 box, calculate as 1 box.
-                    // Otherwise, calculate exact box fraction.
                     let calculatedBoxQty = rolls / rollsPerBox;
                     if (calculatedBoxQty < 1 && calculatedBoxQty > 0) {
                         calculatedBoxQty = 1;
@@ -575,7 +705,7 @@
             
             if (elMoq) {
                 if (isPaper && isPrinted) {
-                    elMoq.style.display = 'none'; // Hide it
+                    elMoq.style.display = 'none';
                 } else {
                     elMoq.style.display = 'inline-block';
                     elMoq.innerText = `最低: ${minQty} ${unitLabel}`;
@@ -596,24 +726,79 @@
             if (isPaper && elHint) { let qty = parseFloat(elQty?.value) || 0; elHint.innerText = `(共 ${qty * rollsPerBox} 卷)`; } else if (elHint) elHint.innerText = '';
         };
 
-        window.placeDirectOrder = async (id, qtyId, printId, invoiceId) => {
+        // --- Client Direct Order Flow ---
+        window.prepareOrder = (id, qtyId, printId, invoiceId) => {
             const p = state.products.find(x => x.id === id);
-            let isPrinted = document.getElementById(printId)?.checked || false; let hasInvoice = document.getElementById(invoiceId)?.checked || false;
+            let isPrinted = document.getElementById(printId)?.checked || false; 
+            let hasInvoice = document.getElementById(invoiceId)?.checked || false;
             let pid = p.id; let name = p.name; let rollsPerBox = (p.category === 'paper' && p.rollsPerBox > 0) ? p.rollsPerBox : 1; let finalPrice = p.price;
-            if(p.category === 'paper') { if (isPrinted) { pid += '_printed'; name += ' (印刷)'; finalPrice = p.pricePrinted || p.price; } else { name += ' (空白)'; } finalPrice = finalPrice * rollsPerBox; }
+            
+            if(p.category === 'paper') { 
+                if (isPrinted) { pid += '_printed'; name += ' (印刷)'; finalPrice = p.pricePrinted || p.price; } 
+                else { name += ' (空白)'; } 
+                finalPrice = finalPrice * rollsPerBox; 
+            }
             if (hasInvoice) { name += ' [含稅]'; finalPrice = finalPrice * 1.05; }
-            const elQty = document.getElementById(qtyId); let inputVal = parseFloat(elQty ? elQty.value : 1) || 0; let finalQty = inputVal;
-            if (p.category === 'paper') { let minRolls = isPrinted ? ((p.paperSpec === '7cm_folded') ? 100 : 60) : ((p.paperSpec === '7cm_folded') ? 20 : 8); let minBoxes = Math.ceil(minRolls/rollsPerBox); if (inputVal < minBoxes) return alert(`最低採購量不足 (需至少 ${minBoxes} 箱)`); } else { let minQty = p.minOrderQty || 1; if (finalQty < minQty) return alert(`最低採購量不足`); }
+            
+            const elQty = document.getElementById(qtyId); 
+            let inputVal = parseFloat(elQty ? elQty.value : 1) || 0; 
+            let finalQty = inputVal;
+            
+            if (p.category === 'paper') { 
+                let minRolls = isPrinted ? ((p.paperSpec === '7cm_folded') ? 100 : 60) : ((p.paperSpec === '7cm_folded') ? 20 : 8); 
+                let minBoxes = Math.ceil(minRolls/rollsPerBox); 
+                if (inputVal < minBoxes) return showToast(`最低採購量不足 (需至少 ${minBoxes} 箱)`, 'error'); 
+            } else { 
+                let minQty = p.minOrderQty || 1; 
+                if (finalQty < minQty) return showToast(`最低採購量不足`, 'error'); 
+            }
+            
             const newItem = { productId: pid, name, price: finalPrice, image: p.imageUrl, qty: finalQty, minQty: p.minOrderQty || 1, cost: p.cost, category: p.category, supplierName: p.supplierName, spec: p.spec, hasInvoice };
+            
+            state.pendingOrderData = newItem;
+            state.showOrderConfirmModal = true;
+            renderApp();
+        };
+
+        window.closeOrderConfirmModal = () => {
+            state.showOrderConfirmModal = false;
+            state.pendingOrderData = null;
+            renderApp();
+        };
+
+        window.confirmOrder = async (e) => {
+            e.preventDefault();
+            const f = e.target;
+            const newItem = state.pendingOrderData;
+            if (!newItem) return;
+            const orderNote = f.orderNote.value.trim();
+
             try {
                 const total = newItem.price * newItem.qty;
+                const orderId = generateOrderId();
                 await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'orders'), {
-                    id: generateOrderId(), clientId: state.currentUser.username, clientName: state.currentUser.name,
+                    id: orderId, clientId: state.currentUser.username, clientName: state.currentUser.name,
                     date: new Date().toISOString().split('T')[0], totalAmount: total, status: 'pending', paymentStatus: 'unpaid',
-                    orderNote: '', items: [newItem]
+                    orderNote: orderNote, items: [newItem]
                 });
                 showToast("訂單已建立，如需修改請至訂購記錄");
-            } catch(e) { console.error(e); showToast("下單失敗: " + e.message, 'error'); }
+
+                const notifyData = {
+                    type: 'new_order',
+                    orderId: orderId,
+                    client: state.currentUser.name,
+                    date: new Date().toISOString().split('T')[0],
+                    items: [{name: newItem.name, qty: newItem.qty, supplierName: newItem.supplierName}],
+                    total: total,
+                    note: orderNote
+                };
+                sendBackendNotification(notifyData);
+
+                state.showOrderConfirmModal = false;
+                state.pendingOrderData = null;
+                renderApp();
+
+            } catch(err) { console.error(err); showToast("下單失敗: " + err.message, 'error'); }
         };
 
         window.openShipmentModal = (docId) => { state.activeShipmentOrder = state.orders.find(o => o.docId === docId); state.showShipmentModal = true; renderApp(); };
@@ -656,18 +841,16 @@
                 if(!state.adminOrderDraft.clientId) return alert('請選擇客戶'); if(state.adminOrderDraft.items.length===0) return alert('請加入商品');
                 const client = state.users.find(u => u.id === state.adminOrderDraft.clientId); if (!client) throw new Error("找不到客戶資料");
                 const total = state.adminOrderDraft.items.reduce((s,i)=>s+i.price*i.qty,0);
+                const orderId = generateOrderId();
                 await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'orders'), { 
-                    id: generateOrderId(), clientId: client.username, clientName: client.name, 
+                    id: orderId, clientId: client.username, clientName: client.name, 
                     date: new Date().toISOString().split('T')[0], totalAmount: total, status: 'pending', paymentStatus: 'unpaid', orderNote: '後台代客下單', items: state.adminOrderDraft.items 
                 });
-                state.showAdminOrderModal = false; showToast(`已為 ${client.name} 建立訂單`); renderApp();
+                state.showAdminOrderModal = false; showToast(`已為 ${client.name} 建立訂單`); 
+                renderApp();
             } catch (err) { alert("失敗: "+err.message); }
         };
         window.setAdminOrderClient = (id) => { state.adminOrderDraft.clientId = id; renderApp(); };
-        window.setAdminClientFilter = (k,v) => { 
-            state.adminOrderFilters[k] = v; 
-            if(!window.isComposing) debouncedRender();
-        };
         window.setAdminProductFilter = (k,v) => { state.adminOrderFilters[k] = v; if(k==='prodCategory') { state.adminOrderFilters.prodSupplier=''; state.adminOrderFilters.prodId=''; } else if(k==='prodSupplier') { state.adminOrderFilters.prodId=''; } renderApp(); };
         window.adjustAdminQty = (d) => { const el = document.getElementById('adminOrderQty'); if(el) { let v=parseInt(el.value)||1; v+=d; if(v<1)v=1; el.value=v; } };
 
@@ -693,10 +876,8 @@
         };
 
         window.openImagePreview = (idOrUrl) => { 
-            // Try to find product by ID first
             let img = idOrUrl;
             if (!idOrUrl.startsWith('http') && !idOrUrl.startsWith('data:')) {
-                // It's an ID
                 let p = state.products.find(x => x.id === idOrUrl);
                 if (p && p.imageUrl) img = p.imageUrl;
                 else {
@@ -734,12 +915,10 @@
             } catch(e) { console.error(e); showToast("更新失敗: " + e.message, 'error'); }
         };
         
-        // --- Expenses Logic Updated from index4 ---
         window.openExpenseModal = (id=null) => { 
             state.editingExpense = id ? state.expenses.find(e => e.id === id) : null;
             state.showExpenseModal = true; 
             renderApp(); 
-            // Trigger change event to set initial state of payee field
             setTimeout(() => {
                 const catSelect = document.getElementById('expenseCategorySelect');
                 if(catSelect) window.handleExpenseCatChange(catSelect);
@@ -748,40 +927,26 @@
         window.closeExpenseModal = () => { state.showExpenseModal=false; state.editingExpense=null; renderApp(); };
         window.saveExpense = async (e) => { 
             e.preventDefault(); const f=e.target; 
-            const data = {
-                title: f.title.value, 
-                amount: Number(f.amount.value), 
-                date: f.date.value,
-                category: f.category.value,
-                payee: f.payee.value,
-                receiptNo: f.receiptNo.value,
-                note: f.note.value
-            };
-            
-            if (state.editingExpense && state.editingExpense.docId) {
-                await updateDoc(doc(db,'artifacts',appId,'public','data','expenses', state.editingExpense.docId), data);
-                showToast('已更新支出');
-            } else {
-                await addDoc(collection(db,'artifacts',appId,'public','data','expenses'), data); 
-                showToast('已新增支出');
-            }
-            state.showExpenseModal=false; 
-            renderApp(); 
+            const data = { title: f.title.value, amount: Number(f.amount.value), date: f.date.value, category: f.category.value, payee: f.payee.value, receiptNo: f.receiptNo.value, note: f.note.value };
+            if (state.editingExpense && state.editingExpense.docId) { await updateDoc(doc(db,'artifacts',appId,'public','data','expenses', state.editingExpense.docId), data); showToast('已更新支出'); } else { await addDoc(collection(db,'artifacts',appId,'public','data','expenses'), data); showToast('已新增支出'); }
+            state.showExpenseModal=false; renderApp(); 
         };
-
         window.handleExpenseCatChange = (el) => {
             const payeeInput = document.getElementById('payeeInput');
             if (!payeeInput) return;
-            if (el.value === 'restock') {
-                payeeInput.setAttribute('list', 'supplierList');
-                payeeInput.placeholder = "選擇供應商或自行輸入";
-            } else {
-                payeeInput.removeAttribute('list');
-                payeeInput.placeholder = "(選填)";
-            }
+            if (el.value === 'restock') { payeeInput.setAttribute('list', 'supplierList'); payeeInput.placeholder = "選擇供應商或自行輸入"; } else { payeeInput.removeAttribute('list'); payeeInput.placeholder = "(選填)"; }
         };
         
-        window.submitRepair = async (e) => { e.preventDefault(); const f=e.target; await addDoc(collection(db,'artifacts',appId,'public','data','repairs'),{clientId:state.currentUser.username, clientName:state.currentUser.name, issue:f.issue.value, imageUrl:f.imageUrl.value, status:'pending', createdAt:Date.now(), date:new Date().toISOString().split('T')[0], cost:0, laborCost:0, parts:[], transportFee: 0}); state.showRepairModal=false; showToast('已叫修'); renderApp(); };
+        window.submitRepair = async (e) => { 
+            e.preventDefault(); const f=e.target; 
+            try {
+                await addDoc(collection(db,'artifacts',appId,'public','data','repairs'),{clientId:state.currentUser.username, clientName:state.currentUser.name, issue:f.issue.value, imageUrl:f.imageUrl.value, status:'pending', createdAt:Date.now(), date:new Date().toISOString().split('T')[0], cost:0, laborCost:0, parts:[], transportFee: 0}); 
+                state.showRepairModal=false; showToast('已叫修'); 
+                const notifyData = { type: 'new_repair', client: state.currentUser.name, date: new Date().toISOString().split('T')[0], issue: f.issue.value };
+                sendBackendNotification(notifyData);
+                renderApp(); 
+            } catch(e) { console.error(e); showToast("叫修失敗: " + e.message, "error"); }
+        };
         window.openRepairProcessModal = (id) => { state.activeRepairId=id; state.showRepairProcessModal=true; renderApp(); };
         window.closeRepairProcessModal = () => { state.showRepairProcessModal=false; renderApp(); };
         window.fillPartDetails = (el) => { const val = el.value; const p = state.products.find(x => x.name === val); if(p) { const row = el.closest('.part-row'); const priceInput = row.querySelector('.part-price'); const costInput = row.querySelector('.part-cost'); if(priceInput) priceInput.value = p.priceAfterTax; if(costInput) costInput.value = p.cost; window.calcRepairTotal(); } };
@@ -822,13 +987,15 @@
 
         function renderLogin() {
             const visualPanel = renderVisualPanel();
+            
             const mobileHeader = `
-            <div class="md:hidden w-full flex flex-col items-center justify-center pb-8 pt-4">
-                <div class="w-16 h-16 bg-[#255a9e] rounded-full flex items-center justify-center shadow-lg text-white mb-3">
-                    <i data-lucide="activity" class="w-8 h-8"></i>
+            <div class="md:hidden w-full flex flex-col items-center justify-center pb-8 pt-10">
+                <h1 class="text-5xl font-black logo-font text-[#255a9e] tracking-wide mb-2" style="font-family: 'Noto Serif TC', serif;">羅德精技</h1>
+                <h2 class="text-2xl font-bold font-serif text-[#255a9e] tracking-tight mb-3">Road Machinery</h2>
+                <div class="flex items-center gap-3 text-sm font-bold text-[#255a9e] tracking-[0.2em] mb-4">
+                    <span>專業</span><span>•</span><span>服務</span><span>•</span><span>品質</span>
                 </div>
-                <div class="text-3xl font-black logo-font text-[#255a9e] tracking-widest">羅德精技</div>
-                <div class="text-xs font-serif font-bold text-slate-400 tracking-widest uppercase mt-1">Road Medical System</div>
+                <div class="text-[10px] font-bold text-slate-400 tracking-[0.3em] uppercase">MEDICAL SUPPLY SYSTEM</div>
             </div>`;
 
             let content = '';
@@ -850,7 +1017,7 @@
                         </div>
                     </div>
                     <div class="w-full max-w-sm mx-auto md:mx-0 mb-8 pl-1 text-center md:text-left">
-                        <h2 class="text-xl md:text-2xl font-bold text-slate-700 tracking-wide">醫材訂貨管理系統 <span class="text-xs md:text-sm text-slate-400 font-normal ml-2 bg-slate-100 px-2 py-0.5 rounded-full">v5.6</span></h2>
+                        <h2 class="text-xl md:text-2xl font-bold text-slate-700 tracking-wide">醫材訂貨管理系統 <span class="text-xs md:text-sm text-slate-400 font-normal ml-2 bg-slate-100 px-2 py-0.5 rounded-full">v5.8</span></h2>
                     </div>
                     <div class="space-y-4 md:space-y-5 w-full max-w-sm mx-auto md:mx-0">
                         <p class="text-sm font-bold text-slate-400 mb-2 uppercase tracking-wide text-center md:text-left">請選擇登入身分</p>
@@ -878,32 +1045,72 @@
                         <div><label class="block text-xs font-bold text-slate-500 mb-1 ml-1">密碼 / Password</label><div class="relative"><i data-lucide="lock" class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300"></i><input name="password" type="password" required class="w-full pl-12 pr-4 py-3 bg-slate-50 border-2 border-slate-100 rounded-xl focus:border-[#255a9e] focus:bg-white outline-none transition-all font-medium text-slate-700 appearance-none" placeholder="請輸入密碼"></div></div>
                         <div class="pt-2"><button type="submit" ${state.isLoading?'disabled':''} class="w-full bg-[#255a9e] hover:bg-[#1e4880] text-white font-bold py-3.5 rounded-xl shadow-lg shadow-blue-900/20 transition-all transform active:scale-95 flex items-center justify-center tracking-wide">${state.isLoading ? '連線中...' : '登入系統 Login'}</button></div>
                     </form>
-                    <div class="mt-8 text-center w-full max-w-sm mx-auto md:mx-0"><button onclick="window.openRegisterModal('${state.loginMode==='staff'?'supplier':'client'}')" class="text-sm text-slate-400 hover:text-[#255a9e] font-bold transition-colors p-2">還沒有帳號？ <span class="underline">立即註冊</span></button></div>
+                    <div class="mt-6 text-center w-full max-w-sm mx-auto md:mx-0 text-sm">
+                        <button onclick="window.openRegisterModal('${state.loginMode==='staff'?'supplier':'client'}')" class="text-slate-400 hover:text-[#255a9e] font-bold transition-colors px-2 border-r border-slate-300">還沒有帳號？ <span class="underline">立即註冊</span></button>
+                        <button onclick="window.openForgotModal()" class="text-slate-400 hover:text-[#255a9e] font-bold transition-colors px-2">忘記密碼？</button>
+                    </div>
                 </div>`;
             }
-            return `<div class="min-h-dvh w-full flex items-center justify-center p-0 md:p-4 login-bg-pattern"><div class="w-full md:max-w-5xl bg-white md:rounded-[2rem] shadow-none md:shadow-[0_20px_60px_-15px_rgba(0,0,0,0.3)] overflow-hidden flex min-h-dvh md:min-h-[600px] animate-fade-in relative z-10 flex-col md:flex-row">${content}${visualPanel}</div><div class="fixed bottom-2 md:bottom-4 text-slate-400/50 text-[10px] md:text-xs font-mono w-full text-center pointer-events-none">System Ver 5.6.23 (CRM+Expense)</div></div>`;
+            return `<div class="min-h-dvh w-full flex items-center justify-center p-0 md:p-4 login-bg-pattern"><div class="w-full md:max-w-5xl bg-white md:rounded-[2rem] shadow-none md:shadow-[0_20px_60px_-15px_rgba(0,0,0,0.3)] overflow-hidden flex min-h-dvh md:min-h-[600px] animate-fade-in relative z-10 flex-col md:flex-row">${content}${visualPanel}</div><div class="fixed bottom-2 md:bottom-4 text-slate-400/50 text-[10px] md:text-xs font-mono w-full text-center pointer-events-none">System Ver 5.8.0 (Feature Update)</div></div>`;
         }
 
-        function renderRegisterModal() { if (!state.showRegisterModal) return ''; const isClient = state.registerRole === 'client'; const roleTitle = isClient ? '診所/藥局' : '供應商'; let typeFieldHTML = isClient ? `<div><label class="block text-sm font-medium text-gray-700 mb-1">類型</label><select name="type" class="w-full border border-gray-300 rounded-lg p-2 outline-none bg-white"><option value="clinic" selected>診所</option><option value="pharmacy">藥局</option><option value="hospital">醫院</option><option value="other">其他</option></select></div>` : `<div><label class="block text-sm font-medium text-gray-700 mb-1">類型</label><div class="w-full border border-gray-200 bg-gray-100 rounded-lg p-2 text-gray-500 cursor-not-allowed">供應商</div><input type="hidden" name="type" value="supplier"></div>`; return `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4"><div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-fade-in max-h-[90vh] overflow-y-auto custom-scrollbar mobile-modal"><div class="p-5 border-b border-gray-100 bg-blue-50 flex justify-between items-center sticky top-0 bg-white z-10"><h3 class="font-bold text-lg text-gray-800">${roleTitle} 註冊</h3><button onclick="window.closeRegisterModal()" class="text-gray-400 hover:text-gray-600"><i data-lucide="x" class="w-5 h-5"></i></button></div><form onsubmit="window.handleRegister(event)" class="p-6 space-y-4"><div><label class="block text-sm font-medium text-gray-700 mb-1">${roleTitle}名稱 (即登入帳號)</label><input name="registerName" type="text" required class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><div><label class="block text-sm font-medium text-gray-700 mb-1">聯絡電話</label><input name="phone" type="tel" required class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><div class="grid grid-cols-2 gap-2"><div><label class="block text-sm font-medium text-gray-700 mb-1">縣市</label><select name="city" class="w-full border border-gray-300 rounded-lg p-2 outline-none bg-white"><option value="">選擇縣市</option>${TAIWAN_CITIES.map(c => `<option value="${c}">${c}</option>`).join('')}</select></div>${typeFieldHTML}</div><div><label class="block text-sm font-medium text-gray-700 mb-1">地址</label><input name="address" type="text" class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><div><label class="block text-sm font-medium text-gray-700 mb-1">密碼</label><input name="password" type="password" required class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><div><label class="block text-sm font-medium text-gray-700 mb-1">確認密碼</label><input name="confirmPassword" type="password" required class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><button type="submit" class="w-full py-3 bg-blue-600 text-white hover:bg-blue-700 rounded-lg font-bold shadow-md">註冊並登入</button></form></div></div>`; }
-        function renderProfileModal() { if (!state.showProfileModal || !state.currentUser) return ''; const u = state.currentUser; const isAdmin = state.currentUser.role === 'admin'; const isClient = u.role === 'client'; return `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4"><div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-fade-in max-h-[90vh] overflow-y-auto mobile-modal"><div class="p-5 border-b border-gray-100 bg-slate-50 flex justify-between items-center"><h3 class="font-bold text-lg text-gray-800">個人資料管理</h3><button onclick="window.closeProfileModal()" class="text-gray-400 hover:text-gray-600"><i data-lucide="x" class="w-5 h-5"></i></button></div><form onsubmit="window.saveProfile(event)" class="p-6 space-y-4"><div><label class="block text-sm font-medium text-gray-500 mb-1">名稱 (帳號)</label><input type="text" value="${u.username}" disabled class="w-full border border-gray-200 bg-gray-50 rounded-lg p-2"></div><div><label class="block text-sm font-medium text-gray-700 mb-1">電話</label><input name="phone" type="tel" value="${u.phone||''}" required class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><div class="grid grid-cols-2 gap-2"><div><label class="block text-sm font-medium text-gray-700 mb-1">縣市</label><select name="city" class="w-full border border-gray-300 rounded-lg p-2"><option value="">未設定</option>${TAIWAN_CITIES.map(c => `<option value="${c}" ${u.city===c?'selected':''}>${c}</option>`).join('')}</select></div><div><label class="block text-sm font-medium text-gray-700 mb-1">類型</label><select name="type" class="w-full border border-gray-300 rounded-lg p-2"><option value="">未設定</option><option value="clinic" ${u.type==='clinic'?'selected':''}>診所</option><option value="pharmacy" ${u.type==='pharmacy'?'selected':''}>藥局</option><option value="hospital" ${u.type==='hospital'?'selected':''}>醫院</option><option value="supplier" ${u.type==='supplier'?'selected':''}>供應商</option></select></div></div>${isAdmin && u.role!=='admin' ? `<div><label class="block text-sm font-medium text-gray-700 mb-1">包藥紙規格偏好</label><select name="preferredPaperSpec" class="w-full border border-gray-300 rounded-lg p-2"><option value="">無限制</option><option value="7cm_folded" ${u.preferredPaperSpec==='7cm_folded'?'selected':''}>7公分對折</option><option value="14cm_unfolded" ${u.preferredPaperSpec==='14cm_unfolded'?'selected':''}>14公分不對折</option></select></div>` : ''}<div><label class="block text-sm font-medium text-gray-700 mb-1">地址</label><input name="address" type="text" value="${u.address||''}" class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div>${isClient ? `<div><label class="block text-sm font-medium text-gray-700 mb-1">目前使用的紙軸照片 (供廠商參考)</label><label class="border p-2 rounded w-full block text-center cursor-pointer bg-slate-50 text-slate-500 hover:bg-slate-100 mb-2 text-sm"><input type="file" accept="image/*" class="hidden" onchange="window.handleImageUpload(this)" data-target="paperRollImageInput" data-preview="paperRollImagePreview">選擇照片</label><input type="hidden" id="paperRollImageInput" name="paperRollImageUrl" value="${u.paperRollImageUrl||''}"><img id="paperRollImagePreview" src="${u.paperRollImageUrl||''}" class="h-20 w-full object-contain bg-slate-100 rounded border border-slate-200 mt-2 ${u.paperRollImageUrl?'':'hidden'}"></div>` : ''}<div><label class="block text-sm font-medium text-gray-700 mb-1">備註</label><textarea name="note" rows="2" class="w-full border border-gray-300 rounded-lg p-2 outline-none">${u.note||''}</textarea></div><div class="pt-2 border-t border-gray-100"><label class="block text-sm font-medium text-gray-700 mb-1">重設密碼 (留空不修改)</label><input name="password" type="password" class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><button type="submit" class="w-full py-2 bg-slate-800 text-white hover:bg-slate-900 rounded-lg font-bold shadow-md">儲存變更</button></form><div class="p-4 border-t border-gray-100"><button onclick="window.logout()" class="w-full py-3 bg-red-50 text-red-600 rounded-lg font-bold border border-red-200 hover:bg-red-100 flex items-center justify-center"><i data-lucide="log-out" class="w-4 h-4 mr-2"></i> 登出系統</button></div></div></div>`; }
+        function renderForgotModal() {
+            if (!state.showForgotModal) return '';
+            return `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4">
+                <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-fade-in mobile-modal">
+                    <div class="p-5 border-b border-gray-100 bg-slate-50 flex justify-between items-center">
+                        <h3 class="font-bold text-lg text-gray-800">重設密碼</h3>
+                        <button onclick="window.closeForgotModal()" class="text-gray-400 hover:text-gray-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+                    </div>
+                    <form onsubmit="window.handleForgot(event)" class="p-6 space-y-4">
+                        <div class="text-sm text-slate-500 mb-4 bg-blue-50 p-3 rounded-lg border border-blue-100">
+                            請輸入您的帳號與註冊時填寫的聯絡電話以驗證身分並設定新密碼。
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">您的帳號</label>
+                            <input name="username" type="text" required class="w-full border border-gray-300 rounded-lg p-2 outline-none focus:border-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">註冊時的聯絡電話</label>
+                            <input name="phone" type="tel" required class="w-full border border-gray-300 rounded-lg p-2 outline-none focus:border-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">設定新密碼</label>
+                            <input name="newPassword" type="password" required class="w-full border border-gray-300 rounded-lg p-2 outline-none focus:border-blue-500">
+                        </div>
+                        <button type="submit" class="w-full py-3 bg-blue-600 text-white hover:bg-blue-700 rounded-lg font-bold shadow-md mt-2">確認重設密碼</button>
+                    </form>
+                </div>
+            </div>`;
+        }
+
+        function renderRegisterModal() { if (!state.showRegisterModal) return ''; const isClient = state.registerRole === 'client'; const roleTitle = isClient ? '診所/藥局' : '供應商'; let typeFieldHTML = isClient ? `<div><label class="block text-sm font-medium text-gray-700 mb-1">類型</label><select name="type" class="w-full border border-gray-300 rounded-lg p-2 outline-none bg-white"><option value="clinic" selected>診所</option><option value="pharmacy">藥局</option><option value="hospital">醫院</option><option value="other">其他</option></select></div>` : `<div><label class="block text-sm font-medium text-gray-700 mb-1">類型</label><div class="w-full border border-gray-200 bg-gray-100 rounded-lg p-2 text-gray-500 cursor-not-allowed">供應商</div><input type="hidden" name="type" value="supplier"></div>`; return `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4"><div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-fade-in max-h-[90vh] overflow-y-auto custom-scrollbar mobile-modal"><div class="p-5 border-b border-gray-100 bg-blue-50 flex justify-between items-center sticky top-0 bg-white z-10"><h3 class="font-bold text-lg text-gray-800">${roleTitle} 註冊</h3><button onclick="window.closeRegisterModal()" class="text-gray-400 hover:text-gray-600"><i data-lucide="x" class="w-5 h-5"></i></button></div><form onsubmit="window.handleRegister(event)" class="p-6 space-y-4"><div><label class="block text-sm font-medium text-gray-700 mb-1">${roleTitle}名稱 (即登入帳號)</label><input name="registerName" type="text" required class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><div><label class="block text-sm font-medium text-gray-700 mb-1">聯絡電話</label><input name="phone" type="tel" required class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><div class="grid grid-cols-2 gap-2"><div><label class="block text-sm font-medium text-gray-700 mb-1">縣市</label><select name="city" class="w-full border border-gray-300 rounded-lg p-2 outline-none bg-white"><option value="">選擇縣市</option>${TAIWAN_CITIES.map(c => `<option value="${c}">${c}</option>`).join('')}</select></div>${typeFieldHTML}</div><div><label class="block text-sm font-medium text-gray-700 mb-1">出貨地址</label><input name="address" type="text" class="w-full border border-gray-300 rounded-lg p-2 outline-none" placeholder="請填寫完整收件地址"></div><div><label class="block text-sm font-medium text-gray-700 mb-1">密碼</label><input name="password" type="password" required class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><div><label class="block text-sm font-medium text-gray-700 mb-1">確認密碼</label><input name="confirmPassword" type="password" required class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><button type="submit" class="w-full py-3 bg-blue-600 text-white hover:bg-blue-700 rounded-lg font-bold shadow-md">註冊並登入</button></form></div></div>`; }
+        function renderProfileModal() { if (!state.showProfileModal || !state.currentUser) return ''; const u = state.currentUser; const isAdmin = state.currentUser.role === 'admin'; const isClient = u.role === 'client'; return `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4"><div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-fade-in max-h-[90vh] overflow-y-auto mobile-modal"><div class="p-5 border-b border-gray-100 bg-slate-50 flex justify-between items-center"><h3 class="font-bold text-lg text-gray-800">個人資料管理</h3><button onclick="window.closeProfileModal()" class="text-gray-400 hover:text-gray-600"><i data-lucide="x" class="w-5 h-5"></i></button></div><form onsubmit="window.saveProfile(event)" class="p-6 space-y-4"><div><label class="block text-sm font-medium text-gray-500 mb-1">名稱 (帳號)</label><input type="text" value="${u.username}" disabled class="w-full border border-gray-200 bg-gray-50 rounded-lg p-2"></div><div><label class="block text-sm font-medium text-gray-700 mb-1">電話</label><input name="phone" type="tel" value="${u.phone||''}" required class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><div class="grid grid-cols-2 gap-2"><div><label class="block text-sm font-medium text-gray-700 mb-1">縣市</label><select name="city" class="w-full border border-gray-300 rounded-lg p-2"><option value="">未設定</option>${TAIWAN_CITIES.map(c => `<option value="${c}" ${u.city===c?'selected':''}>${c}</option>`).join('')}</select></div><div><label class="block text-sm font-medium text-gray-700 mb-1">類型</label><select name="type" class="w-full border border-gray-300 rounded-lg p-2"><option value="">未設定</option><option value="clinic" ${u.type==='clinic'?'selected':''}>診所</option><option value="pharmacy" ${u.type==='pharmacy'?'selected':''}>藥局</option><option value="hospital" ${u.type==='hospital'?'selected':''}>醫院</option><option value="supplier" ${u.type==='supplier'?'selected':''}>供應商</option></select></div></div>${isAdmin && u.role!=='admin' ? `<div><label class="block text-sm font-medium text-gray-700 mb-1">包藥紙規格偏好</label><select name="preferredPaperSpec" class="w-full border border-gray-300 rounded-lg p-2"><option value="">無限制</option><option value="7cm_folded" ${u.preferredPaperSpec==='7cm_folded'?'selected':''}>7公分對折</option><option value="14cm_unfolded" ${u.preferredPaperSpec==='14cm_unfolded'?'selected':''}>14公分不對折</option></select></div>` : ''}<div><label class="block text-sm font-medium text-gray-700 mb-1">出貨地址</label><input name="address" type="text" value="${u.address||''}" class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div>${isClient ? `<div><label class="block text-sm font-medium text-gray-700 mb-1">目前使用的紙軸照片 (供廠商參考)</label><label class="border p-2 rounded w-full block text-center cursor-pointer bg-slate-50 text-slate-500 hover:bg-slate-100 mb-2 text-sm"><input type="file" accept="image/*" class="hidden" onchange="window.handleImageUpload(this)" data-target="paperRollImageInput" data-preview="paperRollImagePreview">選擇照片</label><input type="hidden" id="paperRollImageInput" name="paperRollImageUrl" value="${u.paperRollImageUrl||''}"><img id="paperRollImagePreview" src="${u.paperRollImageUrl||''}" class="h-20 w-full object-contain bg-slate-100 rounded border border-slate-200 mt-2 ${u.paperRollImageUrl?'':'hidden'}"></div>` : ''}<div><label class="block text-sm font-medium text-gray-700 mb-1">備註</label><textarea name="note" rows="2" class="w-full border border-gray-300 rounded-lg p-2 outline-none">${u.note||''}</textarea></div><div class="pt-2 border-t border-gray-100"><label class="block text-sm font-medium text-gray-700 mb-1">重設密碼 (留空不修改)</label><input name="password" type="password" class="w-full border border-gray-300 rounded-lg p-2 outline-none"></div><button type="submit" class="w-full py-2 bg-slate-800 text-white hover:bg-slate-900 rounded-lg font-bold shadow-md">儲存變更</button></form><div class="p-4 border-t border-gray-100"><button onclick="window.logout()" class="w-full py-3 bg-red-50 text-red-600 rounded-lg font-bold border border-red-200 hover:bg-red-100 flex items-center justify-center"><i data-lucide="log-out" class="w-4 h-4 mr-2"></i> 登出系統</button></div></div></div>`; }
 
         function renderSidebar() {
             const isAdmin = state.currentUser?.role === 'admin';
             const isSupplier = state.currentUser?.role === 'supplier';
             
             const adminMainTabs = ['dashboard', 'orders', 'products', 'repair_admin', 'crm', 'expenses', 'users']; 
-            const supplierMainTabs = ['products'];
+            const supplierMainTabs = ['orders', 'products']; // Added orders for supplier
             const clientMainTabs = ['shop', 'repair_client', 'orders', 'contact'];
             
             let menuItems = [], currentMainTabs = [];
-            const pendingOrders = state.orders.filter(o => o.status === 'pending').length;
+            
+            let pendingOrdersBadge = 0;
+            if (isAdmin) {
+                pendingOrdersBadge = state.orders.filter(o => o.status === 'pending').length;
+            } else if (isSupplier) {
+                pendingOrdersBadge = state.orders.filter(o => o.status === 'pending' && o.items.some(i => (i.supplierName || '自有') === state.currentUser.name)).length;
+            }
+
             const pendingRepairs = state.repairs.filter(r => r.status === 'pending' || r.status === 'processing').length;
-            const totalAlerts = pendingOrders + pendingRepairs;
+            const totalAlerts = pendingOrdersBadge + pendingRepairs;
 
             if (isAdmin) { 
                 menuItems = [
                     { id: 'dashboard', icon: 'layout-dashboard', label: '營運', badge: totalAlerts }, 
-                    { id: 'orders', icon: 'file-text', label: '訂單管理', badge: pendingOrders }, 
+                    { id: 'orders', icon: 'file-text', label: '訂單管理', badge: pendingOrdersBadge }, 
                     { id: 'products', icon: 'package', label: '產品管理' }, 
                     { id: 'repair_admin', icon: 'wrench', label: '維修中心', badge: pendingRepairs }, 
                     { id: 'crm', icon: 'users', label: '聯絡資訊' },
@@ -912,7 +1119,10 @@
                 ]; 
                 currentMainTabs = adminMainTabs;
             } else if (isSupplier) { 
-                menuItems = [{ id: 'products', icon: 'package', label: '產品' }]; 
+                menuItems = [
+                    { id: 'orders', icon: 'file-text', label: '訂單管理', badge: pendingOrdersBadge }, 
+                    { id: 'products', icon: 'package', label: '產品' }
+                ]; 
                 currentMainTabs = supplierMainTabs;
             } else { 
                 menuItems = [
@@ -931,14 +1141,12 @@
             return `<div class="hidden md:flex w-64 flex-col bg-white border-r border-slate-200 h-full"><div class="p-5 border-b border-slate-100"><div class="flex items-center justify-center w-full select-none gap-2"><div class="text-right pr-2 border-r-2 border-[#255a9e] h-[32px] flex items-center"><div class="text-2xl font-black logo-text-zh logo-font tracking-wide leading-none whitespace-nowrap text-[#255a9e]">羅德精技</div></div><div class="text-left flex flex-col justify-between h-[32px] py-0.5"><div class="text-xs font-bold logo-text-en font-serif leading-none tracking-tight whitespace-nowrap text-[#255a9e]">Road Machinery</div><div class="text-[9px] font-bold logo-text-en leading-none w-full flex justify-between whitespace-nowrap text-[#255a9e] tracking-wider"><span>專</span><span>業</span><span>‧</span><span>服</span><span>務</span><span>‧</span><span>品</span><span>質</span></div></div></div></div><nav class="flex-1 p-4 space-y-1 overflow-y-auto">${menuItems.map(i => `<button onclick="window.setView('${i.id}')" class="w-full flex items-center justify-between p-3 rounded-xl transition-all ${state.currentView===i.id?'bg-blue-50 text-blue-700 font-bold':'text-slate-500 hover:bg-slate-50'}"><div class="flex items-center"><i data-lucide="${i.icon}" class="w-5 h-5 mr-3"></i>${i.label}</div>${i.badge>0 ? `<span class="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">${i.badge}</span>` : ''}</button>`).join('')}</nav><div class="p-4 border-t border-slate-100"><div class="flex items-center gap-3 mb-4 px-2"><div class="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-600">${firstChar}</div><div class="flex-1 min-w-0"><p class="text-sm font-bold text-slate-700 truncate">${state.currentUser.name}</p></div></div><div class="space-y-2"><button onclick="window.openModal('profile')" class="w-full py-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-500 hover:bg-slate-50">個人資料</button><button onclick="window.logout()" class="w-full py-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-500 hover:bg-slate-50">登出</button></div></div></div>${showMobileNav ? `<div class="md:hidden fixed bottom-0 w-full bg-white border-t border-slate-200 flex justify-around py-2 px-1 z-40 pb-safe animate-fade-in">${mobileNavItems.map(i => `<button onclick="window.setView('${i.id}')" class="flex flex-col items-center p-2 min-w-[60px] ${state.currentView===i.id?'text-blue-600':'text-slate-400'}"><div class="relative"><i data-lucide="${i.icon}" class="w-6 h-6 mb-1 ${state.currentView===i.id?'fill-current/10':''}"></i>${i.badge>0 ? `<span class="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white"></span>`:''}</div><span class="text-[10px] font-medium">${i.label}</span></button>`).join('')}<button onclick="window.openModal('profile')" class="flex flex-col items-center p-2 min-w-[60px] text-slate-400"><div class="relative"><i data-lucide="user" class="w-6 h-6 mb-1"></i></div><span class="text-[10px] font-medium">我的</span></button></div>` : ''}`;
         }
 
-        // --- RESTORED MISSING FUNCTION: Shop View ---
         function renderShop() {
             if (!state.activeCategory) {
                 const cats = [
                     {id:'machine', name:'包藥機', icon:'printer', color:'text-indigo-500', border:'border-indigo-500'},
                     {id:'paper', name:'包藥紙卷', icon:'scroll', color:'text-amber-500', border:'border-amber-500'},
                     {id:'medicine_bag', name:'夾鍊藥袋', icon:'shopping-bag', color:'text-emerald-500', border:'border-emerald-500'},
-                    {id:'parts', name:'耗材零件', icon:'settings', color:'text-blue-500', border:'border-blue-500'},
                     {id:'other', name:'其他商品', icon:'box', color:'text-slate-500', border:'border-slate-500'}
                 ];
                 return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col pt-20 md:pt-8"><h2 class="text-2xl font-bold text-slate-800 mb-6">商品採購</h2><div class="category-grid">${cats.map(c=>`<div onclick="window.setCategory('${c.id}')" class="category-card-elegant cursor-pointer group border-l-4 ${c.border}"><div class="z-10"><h3 class="text-xl font-bold mb-1">${c.name}</h3><span class="text-xs opacity-60 font-medium tracking-wider">SHOP NOW</span></div><div class="self-end mt-4 text-slate-300 group-hover:text-current transition-colors"><i data-lucide="arrow-right" class="w-6 h-6"></i></div><i data-lucide="${c.icon}" class="w-24 h-24 cat-icon-bg ${c.color}"></i></div>`).join('')}</div></div>`;
@@ -947,17 +1155,48 @@
             const products = state.products.filter(p => p.category === state.activeCategory);
             return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col pt-20 md:pt-8"><div class="flex items-center gap-4 mb-6"><button onclick="window.setCategory(null)" class="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center hover:bg-slate-50 text-slate-600"><i data-lucide="arrow-left" class="w-5 h-5"></i></button><h2 class="text-2xl font-bold text-slate-800">${CAT_MAP[state.activeCategory]||state.activeCategory}</h2></div><div class="product-grid">${products.map(p => {
                const isPaper = p.category === 'paper';
-               return `<div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex flex-col product-card"><div class="img-container mb-4" onclick="window.openImagePreview('${p.imageUrl}')">${p.imageUrl ? `<img src="${p.imageUrl}">` : `<i data-lucide="box" class="w-12 h-12 text-slate-300"></i>`}</div><h3 class="font-bold text-slate-800 mb-1 text-lg leading-tight">${p.name}</h3><p class="text-xs text-slate-500 mb-3">${p.spec||''}</p><div class="mt-auto space-y-3"><div class="flex justify-between items-end"><div class="text-xs text-slate-400 font-bold">單價</div><div class="text-xl font-black text-blue-600" id="price-${p.id}">${formatMoney(p.price)}</div></div>${isPaper && p.hasPrinting ? `<label class="flex items-center text-sm bg-blue-50 p-2 rounded cursor-pointer"><input type="checkbox" id="print-${p.id}" onchange="window.updateShopCard('${p.id}')" class="mr-2"> 加印診所名稱</label>` : ''}<label class="flex items-center text-sm text-slate-500 cursor-pointer"><input type="checkbox" id="invoice-${p.id}" onchange="window.updateShopCard('${p.id}')" class="mr-2"> 需要發票 (+5%)</label><div class="flex items-center gap-2"><input type="number" id="qty-${p.id}" value="${p.minOrderQty||1}" min="${p.minOrderQty||1}" class="border rounded-lg p-2 w-20 text-center font-bold" oninput="window.updateShopCard('${p.id}')"><button onclick="window.placeDirectOrder('${p.id}', 'qty-${p.id}', 'print-${p.id}', 'invoice-${p.id}')" class="flex-1 bg-slate-800 text-white py-2 rounded-lg font-bold hover:bg-slate-900 active:scale-95 transition-all">訂購</button></div><div id="moq-${p.id}" class="text-xs text-orange-500 text-center font-bold" style="display: ${p.minOrderQty>1?'block':'none'}">最低: ${p.minOrderQty} ${getUnitLabel(p.category)}</div><div id="hint-${p.id}" class="text-xs text-slate-400 text-center h-4"></div></div></div>`;
+               return `<div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex flex-col product-card"><div class="img-container mb-4" onclick="window.openImagePreview('${p.imageUrl}')">${p.imageUrl ? `<img src="${p.imageUrl}">` : `<i data-lucide="box" class="w-12 h-12 text-slate-300"></i>`}</div><h3 class="font-bold text-slate-800 mb-1 text-lg leading-tight">${p.name}</h3><p class="text-xs text-slate-500 mb-3">${p.spec||''}</p><div class="mt-auto space-y-3"><div class="flex justify-between items-end"><div class="text-xs text-slate-400 font-bold">單價</div><div class="text-xl font-black text-blue-600" id="price-${p.id}">${formatMoney(p.price)}</div></div>${isPaper && p.hasPrinting ? `<label class="flex items-center text-sm bg-blue-50 p-2 rounded cursor-pointer"><input type="checkbox" id="print-${p.id}" onchange="window.updateShopCard('${p.id}')" class="mr-2"> 加印診所名稱</label>` : ''}<label class="flex items-center text-sm text-slate-500 cursor-pointer"><input type="checkbox" id="invoice-${p.id}" onchange="window.updateShopCard('${p.id}')" class="mr-2"> 需要發票 (+5%)</label><div class="flex items-center gap-2"><input type="number" id="qty-${p.id}" value="${p.minOrderQty||1}" min="${p.minOrderQty||1}" class="border rounded-lg p-2 w-20 text-center font-bold" oninput="window.updateShopCard('${p.id}')"><button onclick="window.prepareOrder('${p.id}', 'qty-${p.id}', 'print-${p.id}', 'invoice-${p.id}')" class="flex-1 bg-slate-800 text-white py-2 rounded-lg font-bold hover:bg-slate-900 active:scale-95 transition-all shadow">訂購</button></div><div id="moq-${p.id}" class="text-xs text-orange-500 text-center font-bold" style="display: ${p.minOrderQty>1?'block':'none'}">最低: ${p.minOrderQty} ${getUnitLabel(p.category)}</div><div id="hint-${p.id}" class="text-xs text-slate-400 text-center h-4"></div></div></div>`;
             }).join('')}</div></div>`;
         }
 
-        // --- RESTORED MISSING FUNCTION: Client Repair View ---
+        // --- Order Confirm Modal for Client Note ---
+        function renderOrderConfirmModal() {
+            if (!state.showOrderConfirmModal || !state.pendingOrderData) return '';
+            const item = state.pendingOrderData;
+            const total = item.price * item.qty;
+            const unit = getUnitLabel(item.category);
+            
+            return `<div class="fixed inset-0 bg-black/50 z-[80] flex items-center justify-center backdrop-blur-sm px-4">
+                <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 animate-fade-in">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="font-bold text-lg text-slate-800">確認訂購內容</h3>
+                        <button onclick="window.closeOrderConfirmModal()" class="text-gray-400 hover:text-gray-600"><i data-lucide="x" class="w-6 h-6"></i></button>
+                    </div>
+                    <form onsubmit="window.confirmOrder(event)" class="space-y-4">
+                        <div class="bg-slate-50 p-4 rounded-lg border border-slate-200 text-sm">
+                            <div class="font-bold text-slate-800 text-base mb-1">${item.name}</div>
+                            <div class="text-slate-500 flex justify-between items-end">
+                                <span>數量: <span class="font-bold text-slate-700">${item.qty} ${unit}</span></span>
+                                <span class="font-black text-xl text-blue-600">${formatMoney(total)}</span>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-bold text-slate-700 mb-2">訂單備註留言 (選填)</label>
+                            <textarea name="orderNote" rows="3" class="w-full border border-slate-300 p-3 rounded-lg outline-none focus:border-blue-500 transition-colors" placeholder="例如：請盡速出貨、特定的收件時間要求..."></textarea>
+                        </div>
+                        <button type="submit" class="w-full bg-blue-600 text-white py-3.5 rounded-lg font-bold shadow-lg hover:bg-blue-700 flex justify-center items-center">
+                            <i data-lucide="check-circle" class="w-5 h-5 mr-2"></i> 確認並送出訂單
+                        </button>
+                    </form>
+                </div>
+            </div>`;
+        }
+
         function renderClientRepair() {
             const myRepairs = state.repairs.filter(r => r.clientId === state.currentUser.username);
             return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col pt-20 md:pt-8"><div class="flex justify-between items-center mb-6"><h2 class="text-2xl font-bold text-slate-800">維修服務</h2><button onclick="window.openModal('repair')" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center shadow-sm font-bold"><i data-lucide="wrench" class="w-4 h-4 mr-2"></i> 申請叫修</button></div><div class="bg-white rounded-xl shadow-sm border border-slate-200 flex-1 overflow-hidden flex flex-col"><div class="overflow-x-auto custom-scrollbar flex-1"><table class="w-full text-left text-sm"><thead class="bg-slate-50 text-slate-600 border-b border-slate-200"><tr><th class="p-4">日期</th><th class="p-4">問題描述</th><th class="p-4 text-center">狀態</th><th class="p-4 text-center">操作</th></tr></thead><tbody class="divide-y divide-slate-100">${myRepairs.map(r => `<tr class="hover:bg-slate-50"><td class="p-4 font-mono text-slate-500">${r.date}</td><td class="p-4 font-bold text-slate-700 max-w-xs truncate">${r.issue}</td><td class="p-4 text-center"><span class="px-2 py-1 rounded text-xs font-bold ${r.status==='completed'?'bg-emerald-100 text-emerald-700':(r.status==='processing'?'bg-blue-100 text-blue-700':'bg-orange-100 text-orange-700')}">${r.status==='completed'?'已完修':(r.status==='processing'?'維修中':'待處理')}</span></td><td class="p-4 text-center"><button onclick="window.openModal('clientRepairDetail', '${r.id}')" class="text-blue-600 hover:text-blue-800 font-bold text-xs border border-blue-200 bg-blue-50 px-3 py-1 rounded">查看</button>${r.status==='pending'?`<button onclick="window.deleteRepair(event, '${r.docId}')" class="ml-2 text-red-600 hover:text-red-800 font-bold text-xs border border-red-200 bg-red-50 px-3 py-1 rounded">取消</button>`:''}</td></tr>`).join('')}${myRepairs.length===0?'<tr><td colspan="4" class="p-8 text-center text-slate-400">尚無維修記錄</td></tr>':''}</tbody></table></div></div>${state.showRepairModal ? `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4"><div class="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 animate-fade-in"><div class="flex justify-between items-center mb-4"><h3 class="font-bold text-lg text-slate-800">申請維修</h3><button onclick="window.closeModal('repair')" class="text-gray-400 hover:text-gray-600"><i data-lucide="x" class="w-6 h-6"></i></button></div><form onsubmit="window.submitRepair(event)" class="space-y-4"><div><label class="block text-sm font-bold text-slate-700 mb-1">問題描述</label><textarea name="issue" required rows="3" class="w-full border p-2 rounded" placeholder="請簡述設備問題..."></textarea></div><div><label class="block text-sm font-bold text-slate-700 mb-1">照片 (選填)</label><label class="border p-2 rounded w-full block text-center cursor-pointer bg-slate-50 text-slate-500 hover:bg-slate-100 mb-2 text-sm"><input type="file" accept="image/*" class="hidden" onchange="window.handleImageUpload(this)" data-target="repairImageInput" data-preview="repairImagePreview">選擇照片</label><input type="hidden" id="repairImageInput" name="imageUrl"><img id="repairImagePreview" class="h-20 w-full object-contain bg-slate-100 rounded border border-slate-200 hidden"></div><button type="submit" class="w-full bg-slate-800 text-white py-3 rounded-lg font-bold shadow-lg hover:bg-slate-900">送出申請</button></form></div></div>` : ''}</div>`;
         }
 
-        // --- UPDATED (REVERTED TO FIXED10-1): History Modal with CRM Details ---
         function renderHistoryModal() {
             if (!state.showHistoryModal) return '';
             const isClientView = state.historyViewType === 'client';
@@ -972,9 +1211,7 @@
                 repairs = state.repairs.filter(r => r.clientId === clientId);
             } else {
                 const supName = state.activeHistorySupplier;
-                // Filter orders that contain items from this supplier
                 orders = state.orders.filter(o => o.items.some(i => i.supplierName === supName));
-                // Filter products from this supplier
                 supplierProducts = state.products.filter(p => (p.supplierName || '自有') === supName);
             }
             
@@ -992,7 +1229,7 @@
                             </div>
                         </div>
                         <div class="text-sm text-slate-600 pl-12">
-                            <span class="font-bold text-xs text-slate-400">地址:</span> ${client.address||'未填寫'}
+                            <span class="font-bold text-xs text-slate-400">出貨地址:</span> ${client.address||'未填寫'}
                         </div>
                     </div>
                     <div class="w-full md:w-64 bg-white rounded-lg border border-slate-200 p-3 shadow-sm">
@@ -1012,9 +1249,7 @@
                 </div>
             ` : '';
 
-            // Render content based on selected tab
             let contentHtml = '';
-            
             if (state.historyTab === 'orders') {
                 contentHtml = `<table class="w-full text-left text-sm">
                     <thead class="bg-slate-50 text-slate-600 border-b border-slate-200 sticky top-0">
@@ -1081,7 +1316,6 @@
             </div>`;
         }
 
-        // --- RESTORED MISSING FUNCTION: Payment Modal ---
         function renderPaymentModal() {
             if(!state.showPaymentModal) return '';
             const o = state.orders.find(x => x.docId === state.activePaymentOrderDocId);
@@ -1112,39 +1346,60 @@
 
         function renderOrders() {
             const isAdmin = state.currentUser.role === 'admin';
-            let orders = isAdmin ? state.orders : state.orders.filter(o => o.clientId === state.currentUser.username);
-            if (isAdmin && state.orderFilter !== 'all') {
-                if(state.orderFilter === 'pending') orders = orders.filter(o => o.status === 'pending');
-                else if(state.orderFilter === 'unpaid') orders = orders.filter(o => o.paymentStatus === 'unpaid');
-            }
-            if (state.orderSearch) {
-                const term = state.orderSearch.toLowerCase();
-                orders = orders.filter(o => o.id.toLowerCase().includes(term) || o.clientName.toLowerCase().includes(term) || o.items.some(i => i.name.toLowerCase().includes(term) || (i.category && CAT_MAP[i.category] && CAT_MAP[i.category].includes(term)) || (i.supplierName && i.supplierName.toLowerCase().includes(term))));
-            }
-            return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col pt-20 md:pt-8"><div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6"><h2 class="text-2xl font-bold text-slate-800">訂單管理</h2>${isAdmin ? `<div class="flex items-center gap-2 bg-white p-1 rounded-lg border border-slate-200 shadow-sm"><button onclick="window.setView('orders','all')" class="px-3 py-1 rounded-md text-sm font-medium transition-colors ${state.orderFilter==='all'?'bg-slate-800 text-white':'text-slate-500 hover:bg-slate-50'}">全部</button><button onclick="window.setView('orders','pending')" class="px-3 py-1 rounded-md text-sm font-medium transition-colors ${state.orderFilter==='pending'?'bg-slate-800 text-white':'text-slate-500 hover:bg-slate-50'}">待出貨</button><button onclick="window.setView('orders','unpaid')" class="px-3 py-1 rounded-md text-sm font-medium transition-colors ${state.orderFilter==='unpaid'?'bg-slate-800 text-white':'text-slate-500 hover:bg-slate-50'}">未收款</button></div>` : ''}</div>${isAdmin ? `<div class="mb-4 flex gap-2"><input id="orderSearchInput" type="text" oninput="window.setOrderSearch(this.value)" oncompositionstart="window.isComposing=true" oncompositionend="window.isComposing=false; window.setOrderSearch(this.value)" value="${state.orderSearch}" placeholder="搜尋訂單、客戶、產品、供應商..." class="border border-slate-300 rounded-lg px-4 py-2 text-sm w-full md:w-96"><button onclick="window.openAdminOrderModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow hover:bg-blue-700 flex-shrink-0">代客下單</button></div>` : ''}<div class="bg-white rounded-xl shadow-sm border border-slate-200 flex-1 overflow-hidden flex flex-col"><div class="overflow-x-auto custom-scrollbar flex-1"><table class="w-full text-left text-sm"><thead class="bg-slate-50 text-slate-600 border-b border-slate-200 sticky top-0 z-10"><tr><th class="p-4">訂單號</th><th class="p-4">日期</th>${isAdmin ? '<th class="p-4">客戶</th>' : ''}<th class="p-4">產品類別</th><th class="p-4">規格 / 型號</th><th class="p-4 text-right">金額</th><th class="p-4 text-center">狀態</th><th class="p-4 text-center">付款</th><th class="p-4 text-center">操作</th></tr></thead><tbody class="divide-y divide-slate-100">${orders.map(o => { const firstItem = o.items[0]; const product = state.products.find(p => p.id === firstItem.productId.replace('_printed','')); const category = firstItem.category ? CAT_MAP[firstItem.category] : (product ? CAT_MAP[product.category] : '-'); const spec = firstItem.spec || (product ? (product.spec||product.name) : firstItem.name); const isPending = o.status === 'pending';
-            // Logic for paper spec note
-            let paperNote = '';
-            if (isAdmin && o.items.some(i => i.category === 'paper')) {
-                const client = state.users.find(u => u.username === o.clientId);
-                if (client && client.paperSpecNote) {
-                    paperNote = `<div class="text-[10px] text-blue-600 bg-blue-50 border border-blue-100 rounded px-1.5 py-0.5 mt-1 inline-block"><i data-lucide="info" class="w-3 h-3 inline mr-0.5"></i>規格: ${client.paperSpecNote}</div>`;
-                }
-            }
-            return `<tr class="hover:bg-slate-50 group cursor-pointer" onclick="${isAdmin || isPending ? `window.openOrderEditModal(event, '${o.id}')` : ''}"><td class="p-4 font-mono text-slate-500 text-xs">${o.id}</td><td class="p-4 text-slate-500">${o.date}</td>${isAdmin ? `<td class="p-4 font-bold text-slate-800">${o.clientName}</td>` : ''}<td class="p-4 text-slate-600 font-medium">${category}</td><td class="p-4 text-slate-600"><div class="truncate max-w-[150px]">${spec}</div>${o.items.length>1?` <span class="text-xs bg-gray-100 rounded px-1">+${o.items.length-1}</span>`:''}${o.orderNote ? `<div class="text-xs text-orange-500 mt-1"><i data-lucide="message-square" class="w-3 h-3 inline mr-1"></i>${o.orderNote}</div>` : ''}${paperNote}</td><td class="p-4 text-right font-bold text-slate-700">${formatMoney(o.totalAmount)}</td><td class="p-4 text-center"><span class="px-2 py-1 rounded text-xs font-bold ${o.status==='completed'?'bg-emerald-100 text-emerald-700':'bg-yellow-100 text-yellow-700'}">${o.status==='completed'?'已出貨':'待出貨'}</span></td><td class="p-4 text-center"><span class="px-2 py-1 rounded text-xs font-bold ${o.paymentStatus==='paid'?'bg-blue-100 text-blue-700':'bg-red-100 text-red-700'}">${o.paymentStatus==='paid'?'已付款':'未付款'}</span></td><td class="p-4 text-center" onclick="event.stopPropagation()"><div class="flex items-center justify-center gap-2">${isAdmin ? (o.status !== 'completed' ? `<button onclick="window.openShipmentModal('${o.docId}')" class="bg-slate-800 text-white px-2 py-1 rounded text-xs hover:bg-slate-900">出貨</button>` : `<button onclick="window.revertShipment(event, '${o.docId}')" class="bg-gray-200 text-gray-600 px-2 py-1 rounded text-xs hover:bg-gray-300">取消出貨</button>`) + (o.paymentStatus !== 'paid' ? `<button onclick="window.openPaymentModal('${o.docId}')" class="bg-blue-600 text-white px-2 py-1 rounded text-xs hover:bg-blue-700">入帳</button>` : `<button onclick="window.revertPayment(event, '${o.docId}')" class="bg-gray-200 text-gray-600 px-2 py-1 rounded text-xs hover:bg-gray-300">取消入帳</button>`) + `<button onclick="window.deleteOrder(event, '${o.docId}')" class="bg-red-50 text-red-600 p-1.5 rounded hover:bg-red-100 border border-red-200" title="刪除訂單"><i data-lucide="trash-2" class="w-4 h-4"></i></button>` : (isPending ? `<button onclick="window.openOrderEditModal(event, '${o.id}')" class="text-blue-600 hover:bg-blue-50 p-2 rounded transition-colors" title="修改訂單內容：僅限待出貨狀態可修改"><i data-lucide="edit-2" class="w-4 h-4"></i></button><button onclick="window.deleteOrder(event, '${o.docId}')" class="text-red-600 hover:bg-red-50 p-2 rounded transition-colors" title="取消訂單：永久刪除此筆訂單"><i data-lucide="trash-2" class="w-4 h-4"></i></button>` : `<span class="text-xs text-slate-400 cursor-help" title="訂單已出貨或處理中，無法修改">已鎖定</span>`)}</div></td></tr>`; }).join('')}${orders.length === 0 ? `<tr><td colspan="${isAdmin?9:9}" class="p-8 text-center text-slate-400">沒有符合的訂單</td></tr>` : ''}</tbody></table></div></div></div>`;
+            const isSupplier = state.currentUser.role === 'supplier';
+            
+            const rowsHtml = window.generateOrderRows();
+            
+            return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col pt-20 md:pt-8">
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+                    <h2 class="text-2xl font-bold text-slate-800">訂單管理</h2>
+                    ${(isAdmin || isSupplier) ? `<div class="flex items-center gap-2 bg-white p-1 rounded-lg border border-slate-200 shadow-sm"><button onclick="window.setView('orders','all')" class="px-3 py-1 rounded-md text-sm font-medium transition-colors ${state.orderFilter==='all'?'bg-slate-800 text-white':'text-slate-500 hover:bg-slate-50'}">全部</button><button onclick="window.setView('orders','pending')" class="px-3 py-1 rounded-md text-sm font-medium transition-colors ${state.orderFilter==='pending'?'bg-slate-800 text-white':'text-slate-500 hover:bg-slate-50'}">待出貨</button><button onclick="window.setView('orders','unpaid')" class="px-3 py-1 rounded-md text-sm font-medium transition-colors ${state.orderFilter==='unpaid'?'bg-slate-800 text-white':'text-slate-500 hover:bg-slate-50'}">未收款</button></div>` : ''}
+                </div>
+                ${(isAdmin || isSupplier) ? `<div class="mb-4 flex gap-2"><input id="orderSearchInput" type="text" oninput="window.handleOrderSearch(this.value)" value="${state.orderSearch}" placeholder="搜尋訂單、客戶、產品..." class="border border-slate-300 rounded-lg px-4 py-2 text-sm w-full md:w-96">${isAdmin ? `<button onclick="window.openAdminOrderModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow hover:bg-blue-700 flex-shrink-0">代客下單</button>` : ''}</div>` : ''}
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 flex-1 overflow-hidden flex flex-col">
+                    <div class="overflow-x-auto custom-scrollbar flex-1">
+                        <table class="w-full text-left text-sm">
+                            <thead class="bg-slate-50 text-slate-600 border-b border-slate-200 sticky top-0 z-10">
+                                <tr>
+                                    <th class="p-4">訂單號</th>
+                                    <th class="p-4">日期</th>
+                                    ${(isAdmin || isSupplier) ? '<th class="p-4">客戶</th>' : ''}
+                                    <th class="p-4">產品類別</th>
+                                    <th class="p-4">規格 / 型號</th>
+                                    <th class="p-4 text-right">金額</th>
+                                    <th class="p-4 text-center">狀態</th>
+                                    <th class="p-4 text-center">付款</th>
+                                    <th class="p-4 text-center">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="orderListBody" class="divide-y divide-slate-100">
+                                ${rowsHtml}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>`;
         }
         
         function renderOrderEditModal() { 
             if (!state.showOrderEditModal || !state.activeEditingOrder) return ''; 
-            const o = state.activeEditingOrder; const isPending = o.status === 'pending';
+            const o = state.activeEditingOrder; 
+            const isPending = o.status === 'pending';
             const isAdmin = state.currentUser.role === 'admin';
+            const isSupplier = state.currentUser.role === 'supplier';
             
-            return `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4"><div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden animate-fade-in max-h-[90vh] overflow-y-auto custom-scrollbar mobile-modal"><div class="p-5 border-b bg-gray-50 flex justify-between items-center sticky top-0"><h3 class="font-bold text-lg text-slate-800">編輯訂單內容 (${o.id})</h3><button onclick="window.closeOrderEditModal()" class="text-gray-400 hover:text-gray-600"><i data-lucide="x" class="w-6 h-6"></i></button></div><div class="p-6">
-            <div class="mb-4 text-sm text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-200">
-                <div class="flex justify-between items-center mb-2"><div><span class="font-bold mr-2">客戶:</span>${o.clientName}</div>${!isPending ? '<span class="text-red-500 font-bold bg-red-50 px-2 py-1 rounded text-xs">訂單已鎖定</span>' : ''}</div>
-                <div class="flex items-center gap-2">
-                    <span class="font-bold">日期:</span>
-                    <input type="date" value="${o.date}" onchange="window.updateOrderDetails(event, 'date')" class="border p-1 rounded text-sm ${!isAdmin ? 'bg-gray-100 text-gray-500' : ''}" ${!isPending || !isAdmin ? 'disabled' : ''}>
+            // 抓取客戶地址 (供老闆/廠商看)
+            const clientUser = state.users.find(u => u.username === o.clientId);
+            const address = clientUser ? clientUser.address : '未提供';
+
+            return `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4"><div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden animate-fade-in max-h-[90vh] overflow-y-auto custom-scrollbar mobile-modal"><div class="p-5 border-b bg-gray-50 flex justify-between items-center sticky top-0 z-10"><h3 class="font-bold text-lg text-slate-800">訂單內容 (${o.id})</h3><button onclick="window.closeOrderEditModal()" class="text-gray-400 hover:text-gray-600"><i data-lucide="x" class="w-6 h-6"></i></button></div><div class="p-6">
+            <div class="mb-4 text-sm text-slate-600 bg-slate-50 p-4 rounded-lg border border-slate-200">
+                <div class="flex justify-between items-center mb-2"><div><span class="font-bold mr-2 text-slate-700">客戶:</span><span class="text-blue-700 font-bold">${o.clientName}</span></div>${!isPending ? '<span class="text-red-500 font-bold bg-red-50 px-2 py-1 rounded text-xs border border-red-100">訂單已鎖定</span>' : ''}</div>
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="font-bold text-slate-700">日期:</span>
+                    <input type="date" value="${o.date}" onchange="window.updateOrderDetails(event, 'date')" class="border p-1 rounded text-sm ${!isAdmin ? 'bg-gray-100 text-gray-500 cursor-not-allowed border-transparent' : ''}" ${!isPending || !isAdmin ? 'disabled' : ''}>
                 </div>
+                ${(isAdmin || isSupplier) ? `<div class="mb-2"><span class="font-bold mr-2 text-slate-700">出貨地址:</span>${address}</div><div class="mt-2 pt-2 border-t border-slate-200"><span class="font-bold mr-2 text-slate-700">客戶備註留言:</span><span class="text-orange-600 font-bold">${o.orderNote || '無'}</span></div>` : ''}
             </div>
             <div class="space-y-3">${o.items.map((item, idx) => {
                 const unit = getUnitLabel(item.category);
@@ -1154,49 +1409,62 @@
                 const isPaper = item.category === 'paper';
                 const totalRolls = isPaper ? (item.qty * rollsPerBox) : 0;
 
-                return `<div class="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                return `<div class="bg-slate-50 p-4 rounded-lg border border-slate-200">
                     <div class="flex justify-between items-start mb-2">
-                        <div><div class="font-bold text-slate-700">${item.name}</div>
-                        ${isPending ? `<div class="text-xs text-slate-500 mt-1 flex items-center gap-1">單價: <input type="number" value="${item.price}" onchange="window.updateOrderDetails(event, 'price', ${idx})" class="w-20 border rounded px-1 py-0.5" ${!isAdmin ? 'disabled' : ''}></div>` : `<div class="text-xs text-slate-500 mt-1">單價: ${formatMoney(item.price)}</div>`}
+                        <div><div class="font-bold text-slate-700 text-base">${item.name}</div>
+                        ${isPending && isAdmin ? `<div class="text-xs text-slate-500 mt-1 flex items-center gap-1">單價: <input type="number" value="${item.price}" onchange="window.updateOrderDetails(event, 'price', ${idx})" class="w-20 border rounded px-1 py-0.5"></div>` : `<div class="text-xs text-slate-500 mt-1">單價: ${formatMoney(item.price)}</div>`}
                         </div>
-                        ${isPending ? `<label class="flex items-center cursor-pointer text-sm bg-white border border-slate-200 px-2 py-1 rounded hover:bg-blue-50 transition-colors"><input type="checkbox" class="mr-2" ${item.hasInvoice ? 'checked' : ''} onchange="window.toggleOrderInvoice(${idx})"> 開發票 (+5%)</label>` : `<span class="text-xs font-bold ${item.hasInvoice ? 'text-blue-600' : 'text-slate-400'}">${item.hasInvoice ? '含發票' : '未稅'}</span>`}
+                        ${isPending && isAdmin ? `<label class="flex items-center cursor-pointer text-sm bg-white border border-slate-200 px-2 py-1 rounded hover:bg-blue-50 transition-colors"><input type="checkbox" class="mr-2" ${item.hasInvoice ? 'checked' : ''} onchange="window.toggleOrderInvoice(${idx})"> 開發票 (+5%)</label>` : `<span class="text-xs font-bold px-2 py-1 rounded ${item.hasInvoice ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'}">${item.hasInvoice ? '含發票' : '未稅'}</span>`}
                     </div>
-                    <div class="flex items-center justify-between mt-2 pt-2 border-t border-slate-200">
-                        ${isPaper && isPending ? `
+                    <div class="flex items-center justify-between mt-3 pt-3 border-t border-slate-200">
+                        ${isPaper && isPending && isAdmin ? `
                             <div class="flex flex-col w-full gap-2">
                                 <div class="flex items-center justify-between"><span class="text-xs font-bold text-slate-500">數量 (箱)</span><input type="number" value="${item.qty}" step="0.1" onchange="window.updateOrderDetails(event, 'boxQty', ${idx})" class="border rounded px-2 py-1 w-24 text-right font-bold"></div>
-                                <div class="flex items-center justify-between"><span class="text-xs font-bold text-blue-600">總卷數 (1箱=${rollsPerBox}捲)</span><input type="number" value="${totalRolls}" onchange="window.updateOrderDetails(event, 'rollQty', ${idx})" class="border rounded px-2 py-1 w-24 text-right font-bold text-blue-600 bg-blue-50" ${!isAdmin ? 'disabled' : ''}></div>
+                                <div class="flex items-center justify-between"><span class="text-xs font-bold text-blue-600">總卷數 (1箱=${rollsPerBox}捲)</span><input type="number" value="${totalRolls}" onchange="window.updateOrderDetails(event, 'rollQty', ${idx})" class="border rounded px-2 py-1 w-24 text-right font-bold text-blue-600 bg-blue-50"></div>
                             </div>
                         ` : `
-                            <div><span class="text-xs text-slate-400 font-bold">數量</span></div>
-                            ${isPending ? `<div class="flex items-center gap-3"><button onclick="window.updateOrderQty(${idx}, -1)" class="w-8 h-8 rounded-full bg-white border border-slate-300 flex items-center justify-center hover:bg-slate-100 font-bold" title="減少">-</button><span class="font-bold text-lg w-16 text-center text-slate-800">${item.qty} <span class="text-xs text-gray-500 font-normal">${unit}</span></span><button onclick="window.updateOrderQty(${idx}, 1)" class="w-8 h-8 rounded-full bg-white border border-slate-300 flex items-center justify-center hover:bg-slate-100 font-bold" title="增加">+</button></div>` : `<span class="font-bold text-lg">${item.qty} <span class="text-xs text-gray-500 font-normal">${unit}</span></span>`}
+                            <div><span class="text-xs text-slate-500 font-bold">數量</span></div>
+                            ${isPending && !isSupplier && !isAdmin ? `<div class="flex items-center gap-3"><button onclick="window.updateOrderQty(${idx}, -1)" class="w-8 h-8 rounded-full bg-white border border-slate-300 flex items-center justify-center hover:bg-slate-100 font-bold" title="減少">-</button><span class="font-bold text-lg w-16 text-center text-slate-800">${item.qty} <span class="text-xs text-gray-500 font-normal">${unit}</span></span><button onclick="window.updateOrderQty(${idx}, 1)" class="w-8 h-8 rounded-full bg-white border border-slate-300 flex items-center justify-center hover:bg-slate-100 font-bold" title="增加">+</button></div>` : `<span class="font-bold text-lg text-slate-800">${item.qty} <span class="text-sm text-gray-500 font-normal ml-1">${unit}</span></span>`}
                         `}
                     </div>
                 </div>`;
-            }).join('')}</div><div class="mt-6 flex justify-between items-center pt-4 border-t border-slate-100"><span class="text-slate-500 font-bold">總金額</span><span class="text-2xl font-bold text-blue-600">${formatMoney(o.totalAmount)}</span></div>${isPending ? `<button onclick="window.saveOrderEdit()" class="w-full bg-blue-600 text-white py-3 rounded-lg font-bold shadow-md hover:bg-blue-700 mt-4">儲存變更</button><button onclick="window.deleteOrder(event, '${o.docId}')" class="w-full bg-red-50 text-red-600 py-3 rounded-lg font-bold border border-red-200 hover:bg-red-100 mt-2">取消此訂單</button>` : ''}</div></div></div>`; 
+            }).join('')}</div><div class="mt-6 flex justify-between items-center pt-4 border-t border-slate-100"><span class="text-slate-500 font-bold">總金額</span><span class="text-2xl font-black text-blue-600">${formatMoney(o.totalAmount)}</span></div>${(isPending && !isSupplier) ? `<button onclick="window.saveOrderEdit()" class="w-full bg-blue-600 text-white py-3.5 rounded-lg font-bold shadow-lg hover:bg-blue-700 mt-6 flex justify-center items-center"><i data-lucide="save" class="w-5 h-5 mr-2"></i> 儲存變更</button><button onclick="window.deleteOrder(event, '${o.docId}')" class="w-full bg-red-50 text-red-600 py-3 rounded-lg font-bold border border-red-200 hover:bg-red-100 mt-3 flex justify-center items-center"><i data-lucide="trash-2" class="w-5 h-5 mr-2"></i> 取消此訂單</button>` : ''}</div></div></div>`; 
         }
 
-        function renderAdminOrderModal() { if(!state.showAdminOrderModal) return ''; const allClients = state.users.filter(u => u.role === 'client'); let filteredClients = allClients; if(state.adminOrderFilters.clientCity) filteredClients = filteredClients.filter(c => c.city === state.adminOrderFilters.clientCity); if(state.adminOrderFilters.clientSearch) { const term = state.adminOrderFilters.clientSearch.toLowerCase(); filteredClients = filteredClients.filter(c => c.name.toLowerCase().includes(term) || c.phone.includes(term)); } const categories = [...new Set(state.products.map(p => p.category))]; let availableSuppliers = []; if(state.adminOrderFilters.prodCategory) availableSuppliers = [...new Set(state.products.filter(p => p.category === state.adminOrderFilters.prodCategory).map(p => p.supplierName || '自有'))]; let filteredProducts = []; if(state.adminOrderFilters.prodCategory && state.adminOrderFilters.prodSupplier) filteredProducts = state.products.filter(p => p.category === state.adminOrderFilters.prodCategory && (p.supplierName || '自有') === state.adminOrderFilters.prodSupplier); const total = state.adminOrderDraft.items.reduce((s,i) => s + i.price * i.qty, 0); return `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4"><div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden animate-fade-in flex flex-col max-h-[95vh]"><div class="p-5 border-b bg-gray-50 flex justify-between items-center"><h3 class="font-bold text-lg text-slate-800">代客下單 (Valet Ordering)</h3><button onclick="window.closeAdminOrderModal()" class="text-gray-400 hover:text-gray-600"><i data-lucide="x" class="w-6 h-6"></i></button></div><div class="p-6 overflow-y-auto flex-1 custom-scrollbar"><div class="mb-6 bg-slate-50 p-4 rounded-lg border border-slate-200"><label class="block text-sm font-bold text-slate-700 mb-3"><span class="bg-blue-600 text-white rounded-full w-5 h-5 inline-flex items-center justify-center text-xs mr-2">1</span>選擇客戶</label><div class="grid grid-cols-2 gap-3 mb-3"><div><label class="text-xs text-slate-500 mb-1 block">縣市篩選</label><select onchange="window.setAdminClientFilter('clientCity', this.value)" class="w-full border p-2 rounded text-sm"><option value="">全部縣市</option>${TAIWAN_CITIES.map(c => `<option value="${c}" ${state.adminOrderFilters.clientCity===c?'selected':''}>${c}</option>`).join('')}</select></div><div><label class="text-xs text-slate-500 mb-1 block">關鍵字搜尋</label><input id="adminClientSearchInput" type="text" oninput="window.setAdminClientFilter('clientSearch', this.value)" oncompositionstart="window.isComposing=true" oncompositionend="window.isComposing=false; window.setAdminClientFilter('clientSearch', this.value)" value="${state.adminOrderFilters.clientSearch}" placeholder="名稱/電話..." class="w-full border p-2 rounded text-sm"></div></div><select onchange="window.setAdminOrderClient(this.value)" class="w-full border p-2 rounded-lg bg-white font-bold text-slate-700"><option value="">-- 請選擇客戶 (${filteredClients.length}) --</option>${filteredClients.map(c => `<option value="${c.id}" ${state.adminOrderDraft.clientId===c.id?'selected':''}>${c.name} (${c.city}) - ${c.phone}</option>`).join('')}</select></div><div class="mb-6 bg-slate-50 p-4 rounded-lg border border-slate-200"><label class="block text-sm font-bold text-slate-700 mb-3"><span class="bg-blue-600 text-white rounded-full w-5 h-5 inline-flex items-center justify-center text-xs mr-2">2</span>加入商品</label><div class="grid grid-cols-2 gap-3 mb-3"><div><label class="text-xs text-slate-500 mb-1 block">A. 產品類別</label><select onchange="window.setAdminProductFilter('prodCategory', this.value)" class="w-full border p-2 rounded text-sm"><option value="">-- 選擇類別 --</option>${categories.map(c => `<option value="${c}" ${state.adminOrderFilters.prodCategory===c?'selected':''}>${CAT_MAP[c]||c}</option>`).join('')}</select></div><div><label class="text-xs text-slate-500 mb-1 block">B. 供應商</label><select onchange="window.setAdminProductFilter('prodSupplier', this.value)" class="w-full border p-2 rounded text-sm" ${!state.adminOrderFilters.prodCategory?'disabled':''}><option value="">-- 先選類別 --</option>${availableSuppliers.map(s => `<option value="${s}" ${state.adminOrderFilters.prodSupplier===s?'selected':''}>${s}</option>`).join('')}</select></div></div><div class="flex gap-2 items-end"><div class="flex-1"><label class="text-xs text-slate-500 mb-1 block">C. 規格 / 型號</label><select onchange="window.setAdminProductFilter('prodId', this.value)" class="w-full border p-2 rounded text-sm font-bold" ${!state.adminOrderFilters.prodSupplier?'disabled':''}><option value="">-- 請選擇產品 --</option>${filteredProducts.map(p => { let unit = (p.category === 'paper' && p.rollsPerBox) ? `(箱/${p.rollsPerBox}捲)` : ''; return `<option value="${p.id}" ${state.adminOrderFilters.prodId===p.id?'selected':''}>${p.name}${unit} - $${p.priceAfterTax}</option>`; }).join('')}</select></div><div class="flex flex-col w-32"><label class="text-xs text-slate-500 mb-1 block">數量</label><div class="flex items-center"><button type="button" onclick="window.adjustAdminQty(-1)" class="bg-gray-200 px-3 py-2 rounded-l hover:bg-gray-300 font-bold border border-gray-300">-</button><input type="number" id="adminOrderQty" value="1" min="1" class="w-full border-y border-gray-300 p-2 text-center text-sm font-bold outline-none h-[42px]" readonly><button type="button" onclick="window.adjustAdminQty(1)" class="bg-gray-200 px-3 py-2 rounded-r hover:bg-gray-300 font-bold border border-gray-300">+</button></div></div><button onclick="window.addAdminOrderItem()" class="bg-blue-600 text-white px-4 py-2 rounded shadow hover:bg-blue-700 font-bold h-[42px] flex items-center ml-2 min-w-[60px] justify-center">確定</button></div></div><div><label class="block text-sm font-bold text-slate-700 mb-2"><span class="bg-blue-600 text-white rounded-full w-5 h-5 inline-flex items-center justify-center text-xs mr-2">3</span>訂單內容</label><div class="bg-white rounded-lg border border-slate-200 overflow-hidden"><table class="w-full text-sm text-left"><thead class="bg-slate-100 text-slate-600"><tr><th class="p-3">品項</th><th class="p-3 text-right">單價</th><th class="p-3 text-center">數量</th><th class="p-3 text-right">小計</th><th class="p-3"></th></tr></thead><tbody>${state.adminOrderDraft.items.map((item, idx) => `<tr class="border-b border-slate-100"><td class="p-3 font-medium"><div class="text-slate-800">${item.name}</div><div class="text-xs text-slate-400">${CAT_MAP[item.category]||'-'}</div></td><td class="p-3 text-right text-slate-500">${formatMoney(item.price)}</td><td class="p-3 text-center font-bold">${item.qty}</td><td class="p-3 text-right font-bold text-slate-800">${formatMoney(item.price*item.qty)}</td><td class="p-3 text-right"><button onclick="window.removeAdminOrderItem(${idx})" class="text-red-500 hover:text-red-700"><i data-lucide="trash-2" class="w-4 h-4"></i></button></td></tr>`).join('')}${state.adminOrderDraft.items.length===0?'<tr><td colspan="5" class="p-4 text-center text-slate-400 italic">尚未加入商品</td></tr>':''}</tbody><tfoot class="bg-slate-50 font-bold text-slate-800"><tr><td colspan="3" class="p-3 text-right">總金額</td><td class="p-3 text-right text-lg text-blue-600">${formatMoney(total)}</td><td></td></tr></tfoot></table></div></div></div><div class="p-4 border-t bg-gray-50"><button type="button" onclick="window.submitAdminOrder()" class="w-full bg-slate-800 text-white py-3 rounded-lg font-bold shadow-lg hover:bg-slate-900 flex justify-center items-center"><i data-lucide="check-circle" class="w-5 h-5 mr-2"></i> 確認建立訂單</button></div></div></div>`; }
-        function renderUserManagement() { return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col"><h2 class="text-2xl font-bold text-gray-800 mb-6">帳號權限管理</h2><div class="bg-white rounded-xl shadow-sm border border-gray-200 flex-1 overflow-hidden flex flex-col"><div class="overflow-x-auto custom-scrollbar flex-1"><table class="w-full text-left text-sm"><thead class="bg-gray-50 text-gray-500 sticky top-0 z-10"><tr><th class="p-4">帳號</th><th class="p-4">身分</th><th class="p-4">操作</th></tr></thead><tbody>${state.users.map(u=>`<tr><td class="p-4 font-bold">${u.name}</td><td class="p-4"><span class="px-2 py-1 rounded text-xs font-bold ${u.role==='admin'?'bg-purple-100 text-purple-700':'bg-slate-100 text-slate-600'}">${u.role==='admin'?'管理員':(u.role==='supplier'?'供應商':'診所/客戶')}</span></td><td class="p-4 flex gap-2"><button onclick="window.toggleAdmin(event, '${u.docId}')" class="text-blue-600 hover:underline text-xs bg-blue-50 px-2 py-1 rounded transition-colors">${u.role==='admin'?'取消管理員':'設為管理員'}</button><button onclick="window.deleteUser(event, '${u.docId}')" class="text-red-600 hover:underline text-xs bg-red-50 px-2 py-1 rounded transition-colors">刪除</button></td></tr>`).join('')}</tbody></table></div></div></div>`; }
-        
-        // --- FIXED: Render Admin Repairs (Consolidated & Tabbed) ---
-        function renderAdminRepairs() {
-            // Filter tickets based on tab
-            const isPendingView = state.repairAdminTab === 'pending';
-            const tickets = isPendingView 
-                ? state.repairs.filter(r => r.status !== 'completed')
-                : state.repairs.filter(r => r.status === 'completed');
+        function renderAdminOrderModal() { 
+            if(!state.showAdminOrderModal) return ''; 
+            const categories = [...new Set(state.products.map(p => p.category))]; 
+            let availableSuppliers = []; 
+            if(state.adminOrderFilters.prodCategory) availableSuppliers = [...new Set(state.products.filter(p => p.category === state.adminOrderFilters.prodCategory).map(p => p.supplierName || '自有'))]; 
+            let filteredProducts = []; 
+            if(state.adminOrderFilters.prodCategory && state.adminOrderFilters.prodSupplier) filteredProducts = state.products.filter(p => p.category === state.adminOrderFilters.prodCategory && (p.supplierName || '自有') === state.adminOrderFilters.prodSupplier); 
+            const total = state.adminOrderDraft.items.reduce((s,i) => s + i.price * i.qty, 0); 
             
+            const allClients = state.users.filter(u => u.role === 'client');
+            let filteredClients = allClients;
+            if(state.adminOrderFilters.clientCity) filteredClients = filteredClients.filter(c => c.city === state.adminOrderFilters.clientCity);
+            if(state.adminOrderFilters.clientSearch) {
+                const term = state.adminOrderFilters.clientSearch.toLowerCase();
+                filteredClients = filteredClients.filter(c => c.name.toLowerCase().includes(term) || c.phone.includes(term));
+            }
+            const clientOptions = `<option value="">-- 請選擇客戶 (${filteredClients.length}) --</option>` + filteredClients.map(c => `<option value="${c.id}" ${state.adminOrderDraft.clientId===c.id?'selected':''}>${c.name} (${c.city}) - ${c.phone}</option>`).join('');
+
+            return `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4"><div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden animate-fade-in flex flex-col max-h-[95vh]"><div class="p-5 border-b bg-gray-50 flex justify-between items-center"><h3 class="font-bold text-lg text-slate-800">代客下單 (Valet Ordering)</h3><button onclick="window.closeAdminOrderModal()" class="text-gray-400 hover:text-gray-600"><i data-lucide="x" class="w-6 h-6"></i></button></div><div class="p-6 overflow-y-auto flex-1 custom-scrollbar"><div class="mb-6 bg-slate-50 p-4 rounded-lg border border-slate-200"><label class="block text-sm font-bold text-slate-700 mb-3"><span class="bg-blue-600 text-white rounded-full w-5 h-5 inline-flex items-center justify-center text-xs mr-2">1</span>選擇客戶</label><div class="grid grid-cols-2 gap-3 mb-3"><div><label class="text-xs text-slate-500 mb-1 block">縣市篩選</label><select onchange="window.setAdminClientFilter('clientCity', this.value)" class="w-full border p-2 rounded text-sm"><option value="">全部縣市</option>${TAIWAN_CITIES.map(c => `<option value="${c}" ${state.adminOrderFilters.clientCity===c?'selected':''}>${c}</option>`).join('')}</select></div><div><label class="text-xs text-slate-500 mb-1 block">關鍵字搜尋</label><input id="adminClientSearchInput" type="text" oninput="window.setAdminClientFilter('clientSearch', this.value)" value="${state.adminOrderFilters.clientSearch}" placeholder="名稱/電話..." class="w-full border p-2 rounded text-sm"></div></div><select id="adminClientSelect" onchange="window.setAdminOrderClient(this.value)" class="w-full border p-2 rounded-lg bg-white font-bold text-slate-700">${clientOptions}</select></div><div class="mb-6 bg-slate-50 p-4 rounded-lg border border-slate-200"><label class="block text-sm font-bold text-slate-700 mb-3"><span class="bg-blue-600 text-white rounded-full w-5 h-5 inline-flex items-center justify-center text-xs mr-2">2</span>加入商品</label><div class="grid grid-cols-2 gap-3 mb-3"><div><label class="text-xs text-slate-500 mb-1 block">A. 產品類別</label><select onchange="window.setAdminProductFilter('prodCategory', this.value)" class="w-full border p-2 rounded text-sm"><option value="">-- 選擇類別 --</option>${categories.map(c => `<option value="${c}" ${state.adminOrderFilters.prodCategory===c?'selected':''}>${CAT_MAP[c]||c}</option>`).join('')}</select></div><div><label class="text-xs text-slate-500 mb-1 block">B. 供應商</label><select onchange="window.setAdminProductFilter('prodSupplier', this.value)" class="w-full border p-2 rounded text-sm" ${!state.adminOrderFilters.prodCategory?'disabled':''}><option value="">-- 先選類別 --</option>${availableSuppliers.map(s => `<option value="${s}" ${state.adminOrderFilters.prodSupplier===s?'selected':''}>${s}</option>`).join('')}</select></div></div><div class="flex gap-2 items-end"><div class="flex-1"><label class="text-xs text-slate-500 mb-1 block">C. 規格 / 型號</label><select onchange="window.setAdminProductFilter('prodId', this.value)" class="w-full border p-2 rounded text-sm font-bold" ${!state.adminOrderFilters.prodSupplier?'disabled':''}><option value="">-- 請選擇產品 --</option>${filteredProducts.map(p => { let unit = (p.category === 'paper' && p.rollsPerBox) ? `(箱/${p.rollsPerBox}捲)` : ''; return `<option value="${p.id}" ${state.adminOrderFilters.prodId===p.id?'selected':''}>${p.name}${unit} - $${p.priceAfterTax}</option>`; }).join('')}</select></div><div class="flex flex-col w-32"><label class="text-xs text-slate-500 mb-1 block">數量</label><div class="flex items-center"><button type="button" onclick="window.adjustAdminQty(-1)" class="bg-gray-200 px-3 py-2 rounded-l hover:bg-gray-300 font-bold border border-gray-300">-</button><input type="number" id="adminOrderQty" value="1" min="1" class="w-full border-y border-gray-300 p-2 text-center text-sm font-bold outline-none h-[42px]" readonly><button type="button" onclick="window.adjustAdminQty(1)" class="bg-gray-200 px-3 py-2 rounded-r hover:bg-gray-300 font-bold border border-gray-300">+</button></div></div><button onclick="window.addAdminOrderItem()" class="bg-blue-600 text-white px-4 py-2 rounded shadow hover:bg-blue-700 font-bold h-[42px] flex items-center ml-2 min-w-[60px] justify-center">確定</button></div></div><div><label class="block text-sm font-bold text-slate-700 mb-2"><span class="bg-blue-600 text-white rounded-full w-5 h-5 inline-flex items-center justify-center text-xs mr-2">3</span>訂單內容</label><div class="bg-white rounded-lg border border-slate-200 overflow-hidden"><table class="w-full text-sm text-left"><thead class="bg-slate-100 text-slate-600"><tr><th class="p-3">品項</th><th class="p-3 text-right">單價</th><th class="p-3 text-center">數量</th><th class="p-3 text-right">小計</th><th class="p-3"></th></tr></thead><tbody>${state.adminOrderDraft.items.map((item, idx) => `<tr class="border-b border-slate-100"><td class="p-3 font-medium"><div class="text-slate-800">${item.name}</div><div class="text-xs text-slate-400">${CAT_MAP[item.category]||'-'}</div></td><td class="p-3 text-right text-slate-500">${formatMoney(item.price)}</td><td class="p-3 text-center font-bold">${item.qty}</td><td class="p-3 text-right font-bold text-slate-800">${formatMoney(item.price*item.qty)}</td><td class="p-3 text-right"><button onclick="window.removeAdminOrderItem(${idx})" class="text-red-500 hover:text-red-700"><i data-lucide="trash-2" class="w-4 h-4"></i></button></td></tr>`).join('')}${state.adminOrderDraft.items.length===0?'<tr><td colspan="5" class="p-4 text-center text-slate-400 italic">尚未加入商品</td></tr>':''}</tbody><tfoot class="bg-slate-50 font-bold text-slate-800"><tr><td colspan="3" class="p-3 text-right">總金額</td><td class="p-3 text-right text-lg text-blue-600">${formatMoney(total)}</td><td></td></tr></tfoot></table></div></div></div><div class="p-4 border-t bg-gray-50"><button type="button" onclick="window.submitAdminOrder()" class="w-full bg-slate-800 text-white py-3 rounded-lg font-bold shadow-lg hover:bg-slate-900 flex justify-center items-center"><i data-lucide="check-circle" class="w-5 h-5 mr-2"></i> 確認建立訂單</button></div></div></div>`; 
+        }
+
+        function renderUserManagement() { return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col pt-20 md:pt-8"><h2 class="text-2xl font-bold text-gray-800 mb-6">帳號權限管理</h2><div class="bg-white rounded-xl shadow-sm border border-gray-200 flex-1 overflow-hidden flex flex-col"><div class="overflow-x-auto custom-scrollbar flex-1"><table class="w-full text-left text-sm"><thead class="bg-gray-50 text-gray-500 sticky top-0 z-10"><tr><th class="p-4">帳號</th><th class="p-4">身分</th><th class="p-4">操作</th></tr></thead><tbody>${state.users.map(u=>`<tr><td class="p-4 font-bold">${u.name}</td><td class="p-4"><span class="px-2 py-1 rounded text-xs font-bold ${u.role==='admin'?'bg-purple-100 text-purple-700':'bg-slate-100 text-slate-600'}">${u.role==='admin'?'管理員':(u.role==='supplier'?'供應商':'診所/客戶')}</span></td><td class="p-4 flex gap-2"><button onclick="window.toggleAdmin(event, '${u.docId}')" class="text-blue-600 hover:underline text-xs bg-blue-50 px-2 py-1 rounded transition-colors">${u.role==='admin'?'取消管理員':'設為管理員'}</button><button onclick="window.deleteUser(event, '${u.docId}')" class="text-red-600 hover:underline text-xs bg-red-50 px-2 py-1 rounded transition-colors">刪除</button></td></tr>`).join('')}</tbody></table></div></div></div>`; }
+        
+        function renderAdminRepairs() {
+            const isPendingView = state.repairAdminTab === 'pending';
+            const tickets = isPendingView ? state.repairs.filter(r => r.status !== 'completed') : state.repairs.filter(r => r.status === 'completed');
             const partProducts = state.products.filter(p => p.category === 'parts');
             
-            // Inline Modal Logic
             const processModal = state.showRepairProcessModal ? (() => {
                 const r = state.repairs.find(x => x.id === state.activeRepairId); 
                 if (!r) return '';
                 const currentParts = Array.isArray(r.parts) ? r.parts : [];
                 return `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4" onclick="if(event.target===this)window.closeRepairProcessModal()"><div class="bg-white rounded-xl shadow-2xl w-full max-w-4xl h-[90vh] flex flex-col md:flex-row overflow-hidden animate-fade-in mobile-modal"><div class="w-full md:w-1/3 bg-slate-50 p-6 border-r border-slate-200 overflow-y-auto"><h3 class="font-bold text-lg mb-4 text-slate-800">叫修內容</h3><div class="mb-4"><span class="text-xs text-slate-500 block">客戶</span><span class="font-bold">${r.clientName}</span></div><div class="mb-4"><span class="text-xs text-slate-500 block">日期</span><span class="font-mono">${r.date}</span></div><div class="mb-4"><span class="text-xs text-slate-500 block">問題描述</span><p class="bg-white p-3 rounded border border-slate-200 text-sm mt-1">${r.issue}</p></div>${r.imageUrl ? `<div class="mt-4"><span class="text-xs text-slate-500 block mb-1">照片/截圖 (點擊放大)</span><div onclick="window.openImagePreview('${r.id}')" class="block group relative rounded-lg overflow-hidden border border-slate-200 cursor-pointer"><img src="${r.imageUrl}" class="w-full h-auto object-cover"><div class="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white"><i data-lucide="zoom-in" class="w-8 h-8"></i></div></div></div>` : ''}</div><div class="flex-1 p-6 overflow-y-auto flex flex-col"><div class="flex justify-between items-center mb-4"><h3 class="font-bold text-xl text-slate-800">處理工單</h3><button onclick="window.closeRepairProcessModal()" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-6 h-6"></i></button></div><form onsubmit="window.processRepair(event)" class="flex-1 flex flex-col space-y-4"><div><label class="block text-sm font-bold text-slate-700 mb-1">技師判定 / 故障原因</label><textarea name="diagnosis" rows="2" class="w-full border border-slate-300 rounded-lg p-2 outline-none" placeholder="請填寫檢修結果...">${r.diagnosis||''}</textarea></div><div class="flex-1 bg-slate-50 rounded-lg p-4 border border-slate-200 flex flex-col"><div class="flex justify-between items-center mb-2"><label class="block text-sm font-bold text-slate-700">更換零件明細</label><button type="button" onclick="window.addPartRow()" class="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700">+ 新增零件</button></div><datalist id="partOptions">${partProducts.map(p => `<option value="${p.name}">`).join('')}</datalist><div id="partsListContainer" class="flex-1 overflow-y-auto min-h-[100px] mb-2">${currentParts.map(p => `<div class="grid grid-cols-12 gap-2 mb-2 items-center part-row"><input type="text" list="partOptions" onchange="window.fillPartDetails(this)" value="${p.name}" placeholder="品名" class="col-span-4 border p-2 rounded text-sm bg-white"><input type="number" step="0.01" value="${p.cost}" placeholder="成本" class="col-span-2 border p-2 rounded text-sm bg-gray-50 text-gray-500 part-cost" readonly><input type="number" step="0.01" value="${p.price}" placeholder="單價" class="col-span-3 border p-2 rounded text-sm bg-white part-price" oninput="window.calcRepairTotal()"><input type="number" value="${p.qty}" placeholder="量" class="col-span-2 border p-2 rounded text-sm bg-white part-qty" oninput="window.calcRepairTotal()"><button type="button" onclick="this.parentElement.remove();window.calcRepairTotal()" class="col-span-1 text-red-500 flex justify-center"><i data-lucide="trash-2" class="w-4 h-4"></i></button></div>`).join('')}</div><div class="grid grid-cols-2 gap-4 border-t border-slate-200 pt-3"><div><label class="block text-xs font-bold text-slate-600 mb-1">維修工資</label><input id="laborCostInput" name="laborCost" type="number" value="${r.laborCost||0}" oninput="window.calcRepairTotal()" class="w-full border border-slate-300 rounded p-2 text-right"></div><div class="text-right"><span class="block text-xs font-bold text-slate-600 mb-1">總計費用</span><span id="repairTotalDisplay" class="text-2xl font-bold text-red-600 font-mono">${formatMoney(r.cost||0)}</span></div></div><div class="mt-2"><label class="flex items-center text-sm font-bold text-slate-700 cursor-pointer"><input type="checkbox" name="hasTransportFee" class="mr-2" onchange="document.getElementById('transportFeeInput').classList.toggle('hidden', !this.checked); window.calcRepairTotal()" ${r.transportFee > 0 ? 'checked' : ''}> 加收交通費</label><input type="number" id="transportFeeInput" name="transportFee" value="${r.transportFee||0}" class="w-full border border-slate-300 rounded p-2 mt-1 ${r.transportFee > 0 ? '' : 'hidden'}" placeholder="請輸入交通費金額" oninput="window.calcRepairTotal()"></div></div><div class="pt-4 border-t border-slate-100"><label class="block text-sm font-bold text-slate-700 mb-2">工單狀態</label><div class="flex gap-4"><label class="flex items-center"><input type="radio" name="status" value="processing" ${r.status==='processing'?'checked':''} class="mr-2"> 維修中 (暫存)</label><label class="flex items-center"><input type="radio" name="status" value="completed" class="mr-2"> 完修 (結案)</label></div></div><button type="submit" class="w-full py-3 bg-slate-800 text-white rounded-lg font-bold shadow-lg hover:bg-slate-900 mt-2">儲存工單</button></form></div></div></div>`; })() : '';
             
-            // Render Table Content based on Tab
             let tableContent = '';
             if (isPendingView) {
                 tableContent = tickets.map(r => `<tr class="hover:bg-slate-50"><td class="p-4 font-mono text-slate-500">${r.date}</td><td class="p-4 font-bold text-slate-800">${r.clientName}</td><td class="p-4 text-slate-600"><div class="line-clamp-2">${r.issue}</div></td><td class="p-4 text-center">${r.imageUrl?`<div class="w-10 h-10 rounded bg-slate-100 mx-auto overflow-hidden border border-slate-200 cursor-pointer" onclick="window.openImagePreview('${r.id}')"><img src="${r.imageUrl}" class="w-full h-full object-cover"></div>`:'-'}</td><td class="p-4 text-center"><span class="px-2 py-1 rounded text-xs font-bold ${r.status==='processing'?'bg-blue-100 text-blue-700':'bg-orange-100 text-orange-700'}">${r.status==='processing'?'維修中':'待處理'}</span></td><td class="p-4 text-center"><button onclick="window.openRepairProcessModal('${r.id}')" class="bg-slate-800 text-white px-3 py-1.5 rounded text-xs hover:bg-slate-900 shadow font-bold">處理</button></td></tr>`).join('') || '<tr><td colspan="6" class="p-8 text-center text-slate-400">目前沒有待處理的維修案件</td></tr>';
@@ -1320,32 +1588,26 @@
             return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col pt-20 md:pt-8"><div class="flex items-center gap-4 mb-6"><button onclick="window.setDashboardView('main')" class="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center hover:bg-slate-50 text-slate-600"><i data-lucide="arrow-left" class="w-5 h-5"></i></button><h2 class="text-2xl font-bold text-slate-800">${title}</h2></div><div class="bg-white rounded-xl shadow-sm border border-slate-200 flex-1 overflow-hidden flex flex-col"><div class="overflow-x-auto custom-scrollbar flex-1">${content}</div></div></div>`;
         }
 
-        // --- UPDATED (REVERTED TO FIXED10-1): CRM VIEW ---
         function renderCRM() {
             if (state.crmView === 'type') { return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col items-center justify-center pt-20 md:pt-8"><h2 class="text-2xl font-bold text-slate-800 mb-8">聯絡資訊名錄</h2><div class="grid grid-cols-1 md:grid-cols-2 gap-8 w-full max-w-2xl"><div onclick="window.setCRMView('cities', 'client')" class="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 hover:shadow-lg transition-all cursor-pointer flex flex-col items-center group"><div class="w-20 h-20 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform"><i data-lucide="users" class="w-10 h-10"></i></div><h3 class="text-xl font-bold text-slate-700">客戶名錄</h3><p class="text-slate-400 text-sm mt-2">診所、藥局、醫院</p></div><div onclick="window.setCRMView('list', 'supplier')" class="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 hover:shadow-lg transition-all cursor-pointer flex flex-col items-center group"><div class="w-20 h-20 rounded-full bg-purple-50 text-purple-600 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform"><i data-lucide="truck" class="w-10 h-10"></i></div><h3 class="text-xl font-bold text-slate-700">供應商名錄</h3><p class="text-slate-400 text-sm mt-2">合作廠商資訊</p></div></div></div>`; }
             
+            const listHtml = window.generateCRMRows();
+            
             if (state.crmType === 'supplier') {
-                 const suppliers = [...new Set(state.products.map(p => p.supplierName || '自有'))];
-                 const supplierObjs = suppliers.map(s => ({ name: s })); 
-                 const displayList = state.crmSearch ? supplierObjs.filter(s => s.name.includes(state.crmSearch)) : supplierObjs;
-                 
-                 return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col pt-20 md:pt-8"><div class="flex justify-between items-center mb-6"><div class="flex items-center gap-4"><button onclick="window.setCRMView('type')" class="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center hover:bg-slate-50 text-slate-600"><i data-lucide="arrow-left" class="w-5 h-5"></i></button><h2 class="text-2xl font-bold text-slate-800">供應商名錄</h2></div><div class="relative"><i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i><input id="crmSearchInput" type="text" oninput="window.setCRMSearch(this.value)" oncompositionstart="window.isComposing=true" oncompositionend="window.isComposing=false; window.setCRMSearch(this.value)" value="${state.crmSearch}" placeholder="搜尋供應商..." class="pl-9 pr-4 py-2 border rounded-lg text-sm w-48 focus:w-64 transition-all"></div></div><div class="bg-white rounded-xl shadow-sm border border-slate-200 flex-1 overflow-hidden flex flex-col"><div class="overflow-x-auto custom-scrollbar flex-1"><table class="w-full text-left text-sm"><thead class="bg-slate-50 text-slate-600 border-b border-slate-200"><tr><th class="p-4">供應商名稱</th><th class="p-4">操作</th></tr></thead><tbody class="divide-y divide-slate-100">${displayList.map(s => `<tr class="hover:bg-slate-50 cursor-pointer" onclick="window.openSupplierHistory('${s.name}')"><td class="p-4 font-bold text-slate-800">${s.name}</td><td class="p-4"><button onclick="event.stopPropagation(); window.openSupplierHistory('${s.name}')" class="text-purple-600 text-xs bg-purple-50 hover:bg-purple-100 px-2 py-1 rounded border border-purple-200 flex items-center gap-1"><i data-lucide="file-text" class="w-3 h-3"></i> 查看訂貨記錄</button></td></tr>`).join('')}</tbody></table></div></div></div>`;
+                 return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col pt-20 md:pt-8"><div class="flex justify-between items-center mb-6"><div class="flex items-center gap-4"><button onclick="window.setCRMView('type')" class="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center hover:bg-slate-50 text-slate-600"><i data-lucide="arrow-left" class="w-5 h-5"></i></button><h2 class="text-2xl font-bold text-slate-800">供應商名錄</h2></div><div class="relative"><i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i><input id="crmSearchInput" type="text" oninput="window.handleCRMSearch(this.value)" value="${state.crmSearch}" placeholder="搜尋供應商..." class="pl-9 pr-4 py-2 border rounded-lg text-sm w-48 focus:w-64 transition-all"></div></div><div class="bg-white rounded-xl shadow-sm border border-slate-200 flex-1 overflow-hidden flex flex-col"><div class="overflow-x-auto custom-scrollbar flex-1"><table class="w-full text-left text-sm"><thead class="bg-slate-50 text-slate-600 border-b border-slate-200"><tr><th class="p-4">供應商名稱</th><th class="p-4">操作</th></tr></thead><tbody id="crmListBody" class="divide-y divide-slate-100">${listHtml}</tbody></table></div></div></div>`;
             }
 
-            const targetRole = 'client'; 
-            const targets = state.users.filter(u => u.role === targetRole || (u.type==='clinic'||u.type==='pharmacy'||u.type==='hospital'));
-            const searchFiltered = state.crmSearch ? targets.filter(u => u.name.includes(state.crmSearch) || u.phone.includes(state.crmSearch)) : targets;
-            
             if (state.crmView === 'cities' && !state.crmSearch) {
+                const targetRole = 'client'; 
+                const targets = state.users.filter(u => u.role === targetRole || (u.type==='clinic'||u.type==='pharmacy'||u.type==='hospital'));
                 const cityCounts = {}; targets.forEach(u => { const c = u.city || '其他'; cityCounts[c] = (cityCounts[c] || 0) + 1; }); const sortedCities = Object.entries(cityCounts).sort((a,b) => b[1]-a[1]);
-                return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col pt-20 md:pt-8"><div class="flex justify-between items-center mb-6"><div class="flex items-center gap-4"><button onclick="window.setCRMView('type')" class="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center hover:bg-slate-50 text-slate-600"><i data-lucide="arrow-left" class="w-5 h-5"></i></button><h2 class="text-2xl font-bold text-slate-800">客戶分佈 (按縣市)</h2></div><div class="relative"><i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i><input type="text" oninput="window.setCRMSearch(this.value)" oncompositionstart="window.isComposing=true" oncompositionend="window.isComposing=false; window.setCRMSearch(this.value)" placeholder="搜尋客戶..." class="pl-9 pr-4 py-2 border rounded-lg text-sm w-48 focus:w-64 transition-all"></div></div><div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">${sortedCities.map(([city, count]) => `<div onclick="window.setCRMView('list', 'client', '${city}')" class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 hover:shadow-md transition-all cursor-pointer group"><div class="flex justify-between items-start mb-4"><div class="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 group-hover:bg-blue-50 group-hover:text-blue-600"><i data-lucide="map-pin" class="w-6 h-6"></i></div><span class="text-3xl font-bold text-slate-800">${count}</span></div><h3 class="text-xl font-bold text-slate-700">${city}</h3><p class="text-sm text-slate-400 mt-1">點擊查看列表 <i data-lucide="arrow-right" class="w-3 h-3 inline"></i></p></div>`).join('')}</div></div>`;
+                return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col pt-20 md:pt-8"><div class="flex justify-between items-center mb-6"><div class="flex items-center gap-4"><button onclick="window.setCRMView('type')" class="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center hover:bg-slate-50 text-slate-600"><i data-lucide="arrow-left" class="w-5 h-5"></i></button><h2 class="text-2xl font-bold text-slate-800">客戶分佈 (按縣市)</h2></div><div class="relative"><i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i><input type="text" oninput="window.handleCRMSearch(this.value)" placeholder="搜尋客戶..." class="pl-9 pr-4 py-2 border rounded-lg text-sm w-48 focus:w-64 transition-all"></div></div><div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">${sortedCities.map(([city, count]) => `<div onclick="window.setCRMView('list', 'client', '${city}')" class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 hover:shadow-md transition-all cursor-pointer group"><div class="flex justify-between items-start mb-4"><div class="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 group-hover:bg-blue-50 group-hover:text-blue-600"><i data-lucide="map-pin" class="w-6 h-6"></i></div><span class="text-3xl font-bold text-slate-800">${count}</span></div><h3 class="text-xl font-bold text-slate-700">${city}</h3><p class="text-sm text-slate-400 mt-1">點擊查看列表 <i data-lucide="arrow-right" class="w-3 h-3 inline"></i></p></div>`).join('')}</div></div>`;
             }
             
-            const displayList = (!state.crmSearch) ? searchFiltered.filter(u => (u.city || '其他') === state.activeCity) : searchFiltered; 
             const backView = !state.crmSearch ? 'cities' : 'type'; 
             const title = state.crmSearch ? `搜尋結果: "${state.crmSearch}"` : `${state.activeCity} 客戶名錄`;
             
-            return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col pt-20 md:pt-8"><div class="flex justify-between items-center mb-6"><div class="flex items-center gap-4"><button onclick="window.setCRMView('${backView}', 'client')" class="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center hover:bg-slate-50 text-slate-600"><i data-lucide="arrow-left" class="w-5 h-5"></i></button><h2 class="text-2xl font-bold text-slate-800">${title}</h2></div><div class="relative"><i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i><input id="crmSearchInput" type="text" oninput="window.setCRMSearch(this.value)" oncompositionstart="window.isComposing=true" oncompositionend="window.isComposing=false; window.setCRMSearch(this.value)" value="${state.crmSearch}" placeholder="搜尋..." class="pl-9 pr-4 py-2 border rounded-lg text-sm w-48 focus:w-64 transition-all"></div></div><div class="bg-white rounded-xl shadow-sm border border-slate-200 flex-1 overflow-hidden flex flex-col"><div class="overflow-x-auto custom-scrollbar flex-1"><table class="w-full text-left text-sm"><thead class="bg-slate-50 text-slate-600 border-b border-slate-200"><tr><th class="p-4">名稱</th><th class="p-4">類型</th><th class="p-4">聯絡電話</th><th class="p-4">紙軸規格(老闆註記)</th><th class="p-4">操作</th></tr></thead><tbody class="divide-y divide-slate-100">${displayList.map(u => `<tr class="hover:bg-slate-50 cursor-pointer" onclick="window.openClientHistory('${u.docId}')"><td class="p-4 font-bold text-slate-800">${u.name}</td><td class="p-4"><span class="px-2 py-1 rounded-full bg-slate-100 text-xs font-bold text-slate-600">${u.type || '-'}</span></td><td class="p-4 font-mono text-slate-600">${u.phone}</td><td class="p-4"><div class="flex items-center gap-2">${u.paperRollImageUrl?`<img src="${u.paperRollImageUrl}" class="w-8 h-8 rounded border object-cover">`:''}<span class="text-xs text-slate-500">${u.paperSpecNote||'-'}</span></div></td><td class="p-4"><button onclick="event.stopPropagation(); window.openClientHistory('${u.docId}')" class="text-blue-600 text-xs bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded border border-blue-200 flex items-center gap-1"><i data-lucide="history" class="w-3 h-3"></i> 查看記錄</button></td></tr>`).join('')}</tbody></table></div></div></div>`;
+            return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col pt-20 md:pt-8"><div class="flex justify-between items-center mb-6"><div class="flex items-center gap-4"><button onclick="window.setCRMView('${backView}', 'client')" class="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center hover:bg-slate-50 text-slate-600"><i data-lucide="arrow-left" class="w-5 h-5"></i></button><h2 class="text-2xl font-bold text-slate-800">${title}</h2></div><div class="relative"><i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i><input id="crmSearchInput" type="text" oninput="window.handleCRMSearch(this.value)" value="${state.crmSearch}" placeholder="搜尋..." class="pl-9 pr-4 py-2 border rounded-lg text-sm w-48 focus:w-64 transition-all"></div></div><div class="bg-white rounded-xl shadow-sm border border-slate-200 flex-1 overflow-hidden flex flex-col"><div class="overflow-x-auto custom-scrollbar flex-1"><table class="w-full text-left text-sm"><thead class="bg-slate-50 text-slate-600 border-b border-slate-200"><tr><th class="p-4">名稱</th><th class="p-4">類型</th><th class="p-4">聯絡電話</th><th class="p-4">紙軸規格(老闆註記)</th><th class="p-4">操作</th></tr></thead><tbody id="crmListBody" class="divide-y divide-slate-100">${listHtml}</tbody></table></div></div></div>`;
         }
 
         function renderCartModal() { return ''; } 
@@ -1388,7 +1650,6 @@
         }
         function renderImagePreviewModal() { if (!state.showImagePreview || !state.previewImageUrl) return ''; return `<div class="fixed inset-0 bg-black/95 z-[70] flex items-center justify-center p-4 animate-fade-in img-preview-overlay" onclick="if(event.target===this)window.closeImagePreview()"><div class="relative w-full h-full flex items-center justify-center"><img src="${state.previewImageUrl}" class="max-w-full max-h-[90vh] object-contain rounded shadow-2xl"><button onclick="window.closeImagePreview()" class="absolute top-4 right-4 bg-white/20 hover:bg-white/40 text-white rounded-full p-2 backdrop-blur-md transition-colors"><i data-lucide="x" class="w-8 h-8"></i></button></div></div>`; }
         
-        // --- Updated Expense Modal Renderer ---
         function renderExpenseModal() { 
             if (!state.showExpenseModal) return '';
             const e = state.editingExpense || {};
@@ -1399,7 +1660,6 @@
             return `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm px-4"><div class="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 mobile-modal"><div class="flex justify-between mb-6 border-b pb-4"><h3 class="font-bold text-lg text-slate-800">${isEdit?'編輯':'新增'}支出記錄</h3><button onclick="window.closeExpenseModal()" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-6 h-6"></i></button></div><form onsubmit="window.saveExpense(event)" class="space-y-4"><div class="grid grid-cols-2 gap-4"><div><label class="block text-xs font-bold text-slate-500 mb-1">日期 *</label><input name="date" type="date" required value="${e.date || new Date().toISOString().split('T')[0]}" class="w-full border border-slate-300 p-2 rounded text-sm outline-none focus:ring-2 focus:ring-blue-100"></div><div><label class="block text-xs font-bold text-slate-500 mb-1">類別</label><select name="category" id="expenseCategorySelect" onchange="window.handleExpenseCatChange(this)" class="w-full border border-slate-300 p-2 rounded text-sm outline-none bg-white"><option value="other" ${e.category==='other'?'selected':''}>其他支出</option>${Object.entries(EXPENSE_CATS).filter(([k,v])=>k!=='other').map(([k,v])=>`<option value="${k}" ${e.category===k?'selected':''}>${v}</option>`).join('')}</select></div></div><div><label class="block text-xs font-bold text-slate-500 mb-1">項目標題 *</label><input name="title" value="${e.title||''}" required placeholder="例如：購買辦公文具" class="w-full border border-slate-300 p-2 rounded text-sm outline-none focus:ring-2 focus:ring-blue-100"></div><div><label class="block text-xs font-bold text-slate-500 mb-1">金額 *</label><div class="relative"><span class="absolute left-3 top-2 text-slate-400">$</span><input name="amount" type="number" value="${e.amount||''}" required placeholder="0" class="w-full border border-slate-300 pl-6 p-2 rounded text-sm outline-none focus:ring-2 focus:ring-blue-100 font-bold text-slate-700"></div></div><div class="grid grid-cols-2 gap-4"><div><label class="block text-xs font-bold text-slate-500 mb-1">廠商 / 受款人</label><input name="payee" id="payeeInput" value="${e.payee||''}" placeholder="${isRestock ? '選擇供應商或自行輸入' : '(選填)'}" ${isRestock ? 'list="supplierList"' : ''} class="w-full border border-slate-300 p-2 rounded text-sm outline-none"><datalist id="supplierList">${suppliers.map(s => `<option value="${s.name}">`).join('')}</datalist></div><div><label class="block text-xs font-bold text-slate-500 mb-1">發票 / 收據號碼</label><input name="receiptNo" value="${e.receiptNo||''}" placeholder="(選填)" class="w-full border border-slate-300 p-2 rounded text-sm outline-none"></div></div><div><label class="block text-xs font-bold text-slate-500 mb-1">詳細備註</label><textarea name="note" rows="3" placeholder="(選填) 其他詳細說明..." class="w-full border border-slate-300 p-2 rounded text-sm outline-none resize-none">${e.note||''}</textarea></div><button class="w-full bg-slate-800 hover:bg-slate-900 text-white p-3 rounded-lg font-bold shadow-md transition-colors mt-2">儲存記錄</button></form></div></div>`; 
         }
 
-        // --- Updated Expenses List Renderer ---
         function renderExpenses() { 
             return `<div class="p-4 md:p-8 animate-fade-in h-full flex flex-col pt-20 md:pt-8"><div class="flex justify-between items-center mb-6"><h2 class="text-2xl font-bold text-gray-800">支出管理</h2><button onclick="window.openExpenseModal()" class="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 flex items-center shadow-sm"><i data-lucide="plus" class="w-4 h-4 mr-2"></i> 新增支出</button></div><div class="bg-white rounded-xl shadow-sm border border-gray-200 flex-1 overflow-hidden flex flex-col"><div class="overflow-x-auto custom-scrollbar flex-1"><table class="w-full text-left text-sm"><thead class="bg-gray-50 text-gray-500 sticky top-0 z-10"><tr><th class="p-4">日期</th><th class="p-4">類別</th><th class="p-4">項目</th><th class="p-4 text-right">金額</th><th class="p-4 text-center">操作</th></tr></thead><tbody class="divide-y divide-gray-100">${state.expenses.map(e=>`<tr class="hover:bg-gray-50"><td class="p-4 font-mono text-slate-500">${e.date}</td><td class="p-4"><span class="px-2 py-1 bg-slate-100 rounded text-xs text-slate-600">${EXPENSE_CATS[e.category] || '其他'}</span></td><td class="p-4"><div class="font-bold text-slate-700">${e.title}</div>${e.payee ? `<div class="text-xs text-slate-400">付給: ${e.payee}</div>` : ''}</td><td class="p-4 text-right font-bold text-red-600">-${formatMoney(e.amount)}</td><td class="p-4 text-center"><div class="flex items-center justify-center gap-2"><button onclick="window.openExpenseModal('${e.id}')" class="text-blue-600 hover:bg-blue-50 p-2 rounded"><i data-lucide="edit-2" class="w-4 h-4"></i></button><button onclick="window.deleteExpense(event, '${e.docId}')" class="text-red-600 hover:bg-red-50 p-2 rounded"><i data-lucide="trash-2" class="w-4 h-4"></i></button></div></td></tr>`).join('')}</tbody></table></div></div></div>`; 
         }
@@ -1410,14 +1670,11 @@
         }
 
         function renderApp() {
-            // Prevent render if user is typing Chinese
-            if (window.isComposing) return;
-
             const app = document.getElementById('app');
             const focusedId = document.activeElement?.id;
             const cursorPosition = document.activeElement?.selectionStart;
 
-            if (!state.currentUser) { app.innerHTML = renderLogin() + renderRegisterModal(); } 
+            if (!state.currentUser) { app.innerHTML = renderLogin() + renderRegisterModal() + renderForgotModal(); } 
             else {
                 let mainContent = '';
                 if (state.currentView === 'dashboard') mainContent = renderDashboard();
@@ -1431,15 +1688,15 @@
                 else if (state.currentView === 'repair_admin') mainContent = renderAdminRepairs();
                 else if (state.currentView === 'contact') mainContent = renderContact();
                 
-                const isAdmin = state.currentUser.role === 'admin'; const isSupplier = state.currentUser.role === 'supplier'; let currentMainTabs = []; if (isAdmin) currentMainTabs = ['dashboard', 'orders', 'products', 'repair_admin', 'repair_history']; else if (isSupplier) currentMainTabs = ['products']; else currentMainTabs = ['shop', 'repair_client', 'orders', 'contact'];
+                const isAdmin = state.currentUser.role === 'admin'; const isSupplier = state.currentUser.role === 'supplier'; let currentMainTabs = []; if (isAdmin) currentMainTabs = ['dashboard', 'orders', 'products', 'repair_admin', 'repair_history']; else if (isSupplier) currentMainTabs = ['products', 'orders']; else currentMainTabs = ['shop', 'repair_client', 'orders', 'contact'];
                 const showBackButton = !currentMainTabs.includes(state.currentView) || state.viewHistory.length > 0;
-                app.innerHTML = `<div class="flex h-full w-full">${renderSidebar()}<div class="flex-1 bg-slate-50 relative overflow-hidden flex flex-col">${mainContent}${showBackButton ? `<button onclick="window.goBack()" class="md:hidden fixed bottom-24 right-6 z-50 bg-slate-800 text-white px-5 py-3 rounded-full shadow-xl flex items-center animate-fade-in active:scale-95 hover:bg-slate-700 transition-all font-bold text-sm"><i data-lucide="undo-2" class="w-4 h-4 mr-2"></i> 返回</button>` : ''}</div></div>${renderProductModal()}${renderPaymentModal()}${renderExpenseModal()}${renderRegisterModal()}${renderProfileModal()}${renderCartModal()}${renderImagePreviewModal()}${state.showClientRepairDetail?renderClientRepairDetail():''}${state.showAdminOrderModal?renderAdminOrderModal():''}${state.showOrderEditModal?renderOrderEditModal():''}${state.showHistoryModal?renderHistoryModal():''}${state.showShipmentModal?renderShipmentModal():''}`;
+                app.innerHTML = `<div class="flex h-full w-full">${renderSidebar()}<div class="flex-1 bg-slate-50 relative overflow-hidden flex flex-col">${mainContent}${showBackButton ? `<button onclick="window.goBack()" class="md:hidden fixed bottom-24 right-6 z-50 bg-slate-800 text-white px-5 py-3 rounded-full shadow-xl flex items-center animate-fade-in active:scale-95 hover:bg-slate-700 transition-all font-bold text-sm"><i data-lucide="undo-2" class="w-4 h-4 mr-2"></i> 返回</button>` : ''}</div></div>${renderProductModal()}${renderPaymentModal()}${renderExpenseModal()}${renderRegisterModal()}${renderProfileModal()}${renderCartModal()}${renderImagePreviewModal()}${state.showClientRepairDetail?renderClientRepairDetail():''}${state.showAdminOrderModal?renderAdminOrderModal():''}${state.showOrderEditModal?renderOrderEditModal():''}${state.showHistoryModal?renderHistoryModal():''}${state.showShipmentModal?renderShipmentModal():''}${state.showOrderConfirmModal?renderOrderConfirmModal():''}`;
             }
             lucide.createIcons();
             
             if (focusedId) {
                 const el = document.getElementById(focusedId);
-                if (el) {
+                if (el && focusedId !== 'orderSearchInput' && focusedId !== 'crmSearchInput' && focusedId !== 'adminClientSearchInput') {
                     el.focus();
                     if (cursorPosition !== undefined && (el.type === 'text' || el.type === 'search')) {
                         el.setSelectionRange(cursorPosition, cursorPosition);
