@@ -2,7 +2,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>羅德精技醫材訂貨系統 v103 生物辨識版 (2026-08-19)</title>
+    <title>羅德精技醫材訂貨系統 v106 生物辨識版 (2026-08-19)</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Lucide Icons -->
@@ -155,8 +155,8 @@
                 showToast('異步錯誤: ' + (e.reason?.message || e.reason), 'error', 8000);
             }
         });
-        console.log('✅ v103 已載入 (2026-08-19 v103 留言板升級)');
-        // v103 修正: 移除提前呼叫 _isInAppBrowser (避免 TDZ 錯誤)
+        console.log('✅ v106 已載入 (2026-08-19 v106 留言板升級)');
+        // v106 修正: 移除提前呼叫 _isInAppBrowser (避免 TDZ 錯誤)
 
         // 您的 LINE 官方帳號連結 (用於聯絡我們按鈕)，例如 https://lin.ee/xxxxxx
         const LINE_OA_LINK = "https://line.me/ti/p/~d9365003";
@@ -738,6 +738,20 @@
         };
 
         // --- Data Listeners ---
+        // v106: 全域 renderApp 防抖 (1 秒內多次 render 只跑一次)
+        let _renderDebounce = null;
+        const _debouncedRender = (source) => {
+            if (_renderDebounce) {
+                console.log('[v106 防抖] renderApp 已在排隊, 跳過 (' + source + ')');
+                return;
+            }
+            _renderDebounce = setTimeout(() => {
+                _renderDebounce = null;
+                console.log('[v106 防抖] 執行 renderApp (來源: ' + source + ')');
+                renderApp();
+            }, 100);
+        };
+
         const initDataListeners = () => {
             const collections = ['users', 'products', 'orders', 'expenses', 'repairs', 'announcements', 'messages'];
             collections.forEach(col => {
@@ -748,70 +762,65 @@
                     });
                     if(col==='orders') {
                         state.orders = data.sort((a,b)=>new Date(b.date)-new Date(a.date));
-                        window.refreshOrderListUI(); 
+                        window.refreshOrderListUI();
+                        console.log('[v106] orders 更新 (' + data.length + ' 筆)');
                     }
                     else if(col==='repairs') state.repairs = data.sort((a,b)=>b.createdAt - a.createdAt);
                     else if(col==='expenses') state.expenses = data.sort((a,b)=>new Date(b.date)-new Date(a.date));
                     else if(col==='products') state.products = data;
                     else if(col==='announcements') state.announcements = data;
-                    else if(col==='messages') state.messages = data;
+                    else if(col==='messages') {
+                        const wasChanged = JSON.stringify((state.messages||[]).map(m=>m.id)) !== JSON.stringify(data.map(m=>m.id));
+                        state.messages = data;
+                        if (wasChanged) console.log('[v106] messages 更新 (' + data.length + ' 筆)');
+                    }
                     else if(col==='users') {
-                        // v103: 用 Map 對比 docId, 偵測 lastSeen-only 更新 (避免畫面跳)
-                        const oldMap = {};
-                        (state.users || []).forEach(u => { if (u.docId) oldMap[u.docId] = u; });
-                        const newMap = {};
-                        data.forEach(u => { if (u.docId) newMap[u.docId] = u; });
-
-                        const oldIds = Object.keys(oldMap);
-                        const newIds = Object.keys(newMap);
-                        const hasStructuralChange = oldIds.length !== newIds.length ||
-                            oldIds.some(id => !newMap[id]) ||
-                            newIds.some(id => !oldMap[id]);
-
-                        let onlyLastSeenChanged = !hasStructuralChange;
-                        if (!hasStructuralChange) {
-                            for (const docId of newIds) {
-                                const oldU = oldMap[docId];
-                                const newU = newMap[docId];
-                                if (!oldU) { onlyLastSeenChanged = false; break; }
-                                const { lastSeen: oldLS, ...oldRest } = oldU;
-                                const { lastSeen: newLS, ...newRest } = newU;
-                                if (JSON.stringify(oldRest) !== JSON.stringify(newRest)) {
-                                    onlyLastSeenChanged = false;
-                                    break;
-                                }
-                            }
-                        }
-
+                        // v106: 過濾掉 lastSeen, id, docId 這三個自然變動欄位
+                        const stripForCompare = u => {
+                            const r = {};
+                            Object.keys(u).forEach(k => {
+                                if (k !== 'lastSeen' && k !== 'id' && k !== 'docId') r[k] = u[k];
+                            });
+                            return JSON.stringify(r);
+                        };
+                        const oldSig = (state.users || []).map(stripForCompare).sort().join('|');
+                        const newSig = data.map(stripForCompare).sort().join('|');
+                        const isInitialLoad = !state.users || state.users.length === 0;
+                        const dataChanged = oldSig !== newSig;
                         state.users = data;
                         state.isLoading = false;
                         if(state.currentUser) {
                             const fresh = data.find(u=>u.username===state.currentUser.username);
                             if (fresh) {
-                                state.currentUser = fresh;
+                                state.currentUser.lastSeen = fresh.lastSeen;
                             }
                         }
                         if (state.activeHistoryClient && state.showHistoryModal) {
                             state.activeHistoryClient = data.find(u => u.docId === state.activeHistoryClient.docId) || state.activeHistoryClient;
                         }
                         window.refreshCRMListUI();
-                        // 登入頁完全不 re-render
                         if (!state.currentUser || state.currentView === 'login') {
                             return;
                         }
-                        // 只有 lastSeen 變動就不重畫
-                        if (onlyLastSeenChanged) {
-                            console.log('[v103] lastSeen-only 更新, 跳過 renderApp');
+                        // v106: 純 lastSeen 更新絕對不重畫
+                        if (!dataChanged && !isInitialLoad) {
+                            console.log('[v106] users 純 lastSeen 更新, 跳過 renderApp');
                             return;
                         }
-                        renderApp();
+                        if (isInitialLoad) {
+                            console.log('[v106] users 初次載入');
+                            _debouncedRender('users-initial');
+                            return;
+                        }
+                        console.log('[v106] users 真的變了, render');
+                        _debouncedRender('users-changed');
                         return;
                     }
-                    // 其他 collection 載入: 只在已登入時 re-render (登入頁絕對不 re-render)
+                    // 其他 collection 載入
                     if (!state.currentUser || state.currentView === 'login') return;
                     const focused = document.activeElement;
                     if (!focused || (focused.tagName !== 'INPUT' && focused.tagName !== 'TEXTAREA')) {
-                        renderApp();
+                        _debouncedRender(col);
                     }
                 }, err => { console.error(err); state.isLoading = false; renderApp(); });
             });
@@ -827,13 +836,13 @@
             };
             initAuthFlow();
             onAuthStateChanged(auth, u => { if(u) initDataListeners(); });
-            // v103: 頁面載入時, 自動清掉舊的 dismissed 標記 (給用戶重試機會)
+            // v106: 頁面載入時, 自動清掉舊的 dismissed 標記 (給用戶重試機會)
             if (window.clearAllBiometricDismissed) window.clearAllBiometricDismissed();
-            // v103: 頁面載入時, 自動嘗試生物辨識
+            // v106: 頁面載入時, 自動嘗試生物辨識
             setTimeout(() => { if (window.autoTryBiometric) window.autoTryBiometric(); }, 2500);
         }
 
-        // --- v103 生物辨識登入 (WebAuthn) ---
+        // --- v106 生物辨識登入 (WebAuthn) ---
         // 用手機內建的 Face ID / Touch ID / 指紋, 不存任何生物資料
         const _bioBufferToBase64URL = buffer => {
             const bytes = new Uint8Array(buffer);
@@ -854,7 +863,7 @@
                    typeof navigator.credentials?.create === 'function' &&
                    typeof navigator.credentials?.get === 'function';
         };
-        // v103: 更精確的偵測 (檢查裝置是否有「平台生物辨識器」)
+        // v106: 更精確的偵測 (檢查裝置是否有「平台生物辨識器」)
         const _isUVPlatformAvailable = async () => {
             if (!_isWebAuthnSupported()) return false;
             try {
@@ -863,12 +872,12 @@
                 }
                 return true;  // 沒 API 就假設可用 (讓瀏覽器自己判斷)
             } catch (e) {
-                console.warn('[v103 生物辨識] 偵測失敗:', e);
+                console.warn('[v106 生物辨識] 偵測失敗:', e);
                 return true;
             }
         };
 
-        // v103: 偵測是否在 LINE/IG/FB 內建瀏覽器 (這些不支援完整 WebAuthn)
+        // v106: 偵測是否在 LINE/IG/FB 內建瀏覽器 (這些不支援完整 WebAuthn)
         const _isInAppBrowser = () => {
             const ua = navigator.userAgent.toLowerCase();
             if (ua.includes('line/')) return 'LINE';
@@ -882,17 +891,17 @@
             if (!_isWebAuthnSupported()) {
                 return { success: false, error: '此裝置或瀏覽器不支援生物辨識' };
             }
-            // v103: 偵測內建瀏覽器 (LINE/FB/IG), 這些不支援 WebAuthn
+            // v106: 偵測內建瀏覽器 (LINE/FB/IG), 這些不支援 WebAuthn
             const inApp = _isInAppBrowser();
             if (inApp) {
                 return { success: false, error: '請用 Safari 開啟此網址 (不要用 ' + inApp + ' 內建瀏覽器)' };
             }
-            // v103: 不預檢查, 直接嘗試
+            // v106: 不預檢查, 直接嘗試
             const uvCheck = await _isUVPlatformAvailable();
-            console.log('[v103 生物辨識] 平台偵測 (僅參考):', uvCheck);
-            console.log('[v103 生物辨識] 開始註冊:', username);
+            console.log('[v106 生物辨識] 平台偵測 (僅參考):', uvCheck);
+            console.log('[v106 生物辨識] 開始註冊:', username);
             try {
-                // v103: 用 crypto.getRandomValues 確保 challenge 是隨機的
+                // v106: 用 crypto.getRandomValues 確保 challenge 是隨機的
                 const challenge = new Uint8Array(32);
                 crypto.getRandomValues(challenge);
                 const userId = new TextEncoder().encode(username);
@@ -905,7 +914,7 @@
                             { alg: -7, type: 'public-key' },
                             { alg: -257, type: 'public-key' }
                         ],
-                        // v103: 拿掉 residentKey, iOS Safari 14 相容性較好
+                        // v106: 拿掉 residentKey, iOS Safari 14 相容性較好
                         authenticatorSelection: {
                             authenticatorAttachment: 'platform',
                             userVerification: 'required'
@@ -920,13 +929,13 @@
                     credentialId: _bioBufferToBase64URL(credential.rawId),
                     createdAt: new Date().toISOString()
                 };
-                // v103: 註冊成功後, 順便清掉 dismissed 標記 (重新給機會)
+                // v106: 註冊成功後, 順便清掉 dismissed 標記 (重新給機會)
                 try { localStorage.removeItem(`biometric_dismissed_${username}`); } catch(e) {}
                 localStorage.setItem(`biometric_${username}`, JSON.stringify(credentialData));
-                console.log('[v103 生物辨識] 註冊成功:', username, credentialData);
+                console.log('[v106 生物辨識] 註冊成功:', username, credentialData);
                 return { success: true };
             } catch (e) {
-                console.error('[v103 生物辨識] 註冊失敗:', e.name, e.message);
+                console.error('[v106 生物辨識] 註冊失敗:', e.name, e.message);
                 if (e.name === 'NotAllowedError') return { success: false, error: '已取消設定' };
                 if (e.name === 'SecurityError') return { success: false, error: '請用 HTTPS 開啟 (非 file://)' };
                 if (e.name === 'NotSupportedError') return { success: false, error: '此裝置不支援生物辨識' };
@@ -939,26 +948,26 @@
             if (!_isWebAuthnSupported()) return { success: false, error: '此裝置不支援生物辨識' };
             const stored = localStorage.getItem(`biometric_${username}`);
             if (!stored) {
-                console.warn('[v103 生物辨識] 找不到註冊資料:', `biometric_${username}`);
+                console.warn('[v106 生物辨識] 找不到註冊資料:', `biometric_${username}`);
                 return { success: false, error: '此帳號尚未註冊生物辨識' };
             }
             let credData;
             try { credData = JSON.parse(stored); } catch(e) {
-                console.error('[v103 生物辨識] 解析失敗:', e);
+                console.error('[v106 生物辨識] 解析失敗:', e);
                 return { success: false, error: '資料損毀, 請重新註冊' };
             }
             if (!credData.credentialId) {
-                console.error('[v103 生物辨識] 沒有 credentialId:', credData);
+                console.error('[v106 生物辨識] 沒有 credentialId:', credData);
                 return { success: false, error: '註冊資料異常, 請重新註冊' };
             }
-            console.log('[v103 生物辨識] 開始驗證:', username);
+            console.log('[v106 生物辨識] 開始驗證:', username);
             try {
                 const challenge = new Uint8Array(32);
                 crypto.getRandomValues(challenge);
                 const credential = await navigator.credentials.get({
                     publicKey: {
                         challenge,
-                        // v103: iOS Safari 不支援 transports: ['internal'], 拿掉
+                        // v106: iOS Safari 不支援 transports: ['internal'], 拿掉
                         allowCredentials: [{
                             id: _bioBase64URLToBuffer(credData.credentialId),
                             type: 'public-key'
@@ -979,7 +988,7 @@
             const users = [];
             for (let i = 0; i < localStorage.length; i++) {
                 const key = localStorage.key(i);
-                // v103 修正: 排除 dismissed_* 和 lastAutoTry 這些非用戶 key
+                // v106 修正: 排除 dismissed_* 和 lastAutoTry 這些非用戶 key
                 if (key && key.startsWith('biometric_') &&
                     !key.startsWith('biometric_dismissed_') &&
                     !key.startsWith('biometric_lastAutoTry')) {
@@ -992,7 +1001,7 @@
                             users.push({ username, ...data });
                         }
                     } catch (e) {
-                        console.warn('[v103 生物辨識] 解析失敗:', key, e);
+                        console.warn('[v106 生物辨識] 解析失敗:', key, e);
                     }
                 }
             }
@@ -1026,7 +1035,7 @@
 
         // --- Auth Logic ---
         window.setLoginMode = m => { state.loginMode = m; renderApp(); };
-        // v103: 處理生物辨識登入按鈕
+        // v106: 處理生物辨識登入按鈕
         window.handleBiometricLogin = async (username) => {
             if (!_isWebAuthnSupported()) return showToast('此裝置不支援生物辨識', 'error');
             if (state.users.length === 0) {
@@ -1105,12 +1114,12 @@
                     state.currentView = 'welcome';
                     try { localStorage.setItem('lastLoggedInUser', u.username); } catch (e) {}
                     renderApp();
-                    // v103: 登入後更新 lastSeen, 啟動定期更新
+                    // v106: 登入後更新 lastSeen, 啟動定期更新
                     setTimeout(() => { if (window.updateLastSeen) window.updateLastSeen(); }, 1000);
                     setInterval(() => { if (window.updateLastSeen) window.updateLastSeen(); }, 60000); // 每分鐘更新
-                    // v103: 詢問是否啟用生物辨識
+                    // v106: 詢問是否啟用生物辨識
                     setTimeout(() => window.maybePromptBiometric(u.username), 1500);
-                    try { localStorage.removeItem(`biometric_dismissed_${u.username}`); } catch(e) {}  // v103: 清掉舊 dismiss, 讓用戶重新看到提示
+                    try { localStorage.removeItem(`biometric_dismissed_${u.username}`); } catch(e) {}  // v106: 清掉舊 dismiss, 讓用戶重新看到提示
                     return;
                 } catch (err) {
                     console.warn('[登入] Firebase Auth 失敗, 嘗試明文密碼比對', err);
@@ -1124,12 +1133,12 @@
                 state.currentView = 'welcome';
                 try { localStorage.setItem('lastLoggedInUser', u.username); } catch (e) {}
                 showToast(`✓ 歡迎回來 ${u.name}`, 'success', 500);
-                // v103: 登入後更新 lastSeen, 啟動定期更新
+                // v106: 登入後更新 lastSeen, 啟動定期更新
                 setTimeout(() => { if (window.updateLastSeen) window.updateLastSeen(); }, 1000);
                 setInterval(() => { if (window.updateLastSeen) window.updateLastSeen(); }, 60000); // 每分鐘更新
-                // v103: 詢問是否啟用生物辨識
+                // v106: 詢問是否啟用生物辨識
                 setTimeout(() => window.maybePromptBiometric(u.username), 1500);
-                try { localStorage.removeItem(`biometric_dismissed_${u.username}`); } catch(e) {}  // v103: 清掉舊 dismiss
+                try { localStorage.removeItem(`biometric_dismissed_${u.username}`); } catch(e) {}  // v106: 清掉舊 dismiss
                 // 背景: 自動補上 Firebase Auth uid (如果有登入過) + 同步 state.currentUser
                 setTimeout(() => {
                     if (auth.currentUser?.uid) {
@@ -1146,22 +1155,22 @@
             return showToast('帳號或密碼錯誤', 'error');
         };
 
-        // v103: 詢問是否啟用生物辨識 (首次登入後, 用浮動按鈕)
+        // v106: 詢問是否啟用生物辨識 (首次登入後, 用浮動按鈕)
         window.maybePromptBiometric = async (username) => {
             if (!_isWebAuthnSupported()) {
-                console.log('[v103 生物辨識] 此裝置不支援');
+                console.log('[v106 生物辨識] 此裝置不支援');
                 return;
             }
             if (window.isBiometricRegistered(username)) {
-                console.log('[v103 生物辨識] 此帳號已註冊, 跳過詢問');
+                console.log('[v106 生物辨識] 此帳號已註冊, 跳過詢問');
                 return;
             }
             if (localStorage.getItem(`biometric_dismissed_${username}`) === '1') return;
-            console.log('[v103 生物辨識] 顯示啟用提示:', username);
+            console.log('[v106 生物辨識] 顯示啟用提示:', username);
             window.showBiometricPrompt(username);
         };
 
-        // v103: 顯示「啟用生物辨識」浮動提示
+        // v106: 顯示「啟用生物辨識」浮動提示
         window.showBiometricPrompt = (username) => {
             const old = document.getElementById('biometric-prompt');
             if (old) old.remove();
@@ -1197,7 +1206,7 @@
             };
         };
 
-        // v103: 手動啟用生物辨識 (從歡迎頁 / 設定呼叫)
+        // v106: 手動啟用生物辨識 (從歡迎頁 / 設定呼叫)
         window.manualEnableBiometric = async () => {
             if (!_isWebAuthnSupported()) {
                 showToast('此裝置不支援生物辨識', 'error', 3000);
@@ -1223,7 +1232,7 @@
             }
         };
 
-        // v103: 解除生物辨識綁定
+        // v106: 解除生物辨識綁定
         window.removeBiometricBinding = () => {
             const username = state.currentUser?.username;
             if (!username) return;
@@ -1237,7 +1246,7 @@
             renderApp();
         };
 
-        // v103: 診斷裝置的 WebAuthn 支援
+        // v106: 診斷裝置的 WebAuthn 支援
         window.diagnoseBiometric = async () => {
             const lines = [];
             lines.push('🔍 裝置診斷報告');
@@ -1274,22 +1283,22 @@
             alert(msg);
         };
 
-        // v103: 頁面載入時, 自動跳生物辨識
+        // v106: 頁面載入時, 自動跳生物辨識
         window.autoTryBiometric = async () => {
             if (!_isWebAuthnSupported()) {
-                console.log('[v103 生物辨識] 裝置不支援 WebAuthn');
+                console.log('[v106 生物辨識] 裝置不支援 WebAuthn');
                 return;
             }
             const lastUser = localStorage.getItem('lastLoggedInUser');
             if (!lastUser) {
-                console.log('[v103 生物辨識] 沒有上次的登入用戶');
+                console.log('[v106 生物辨識] 沒有上次的登入用戶');
                 return;
             }
             if (!window.isBiometricRegistered(lastUser)) {
-                console.log('[v103 生物辨識] 上次用戶未註冊:', lastUser);
+                console.log('[v106 生物辨識] 上次用戶未註冊:', lastUser);
                 return;
             }
-            console.log('[v103 生物辨識] 自動嘗試登入:', lastUser);
+            console.log('[v106 生物辨識] 自動嘗試登入:', lastUser);
             // 等 1.5 秒讓使用者看到頁面
             setTimeout(async () => {
                 showToast('👤 偵測到生物辨識, 一掃登入...', 'info', 2500);
@@ -1297,7 +1306,7 @@
             }, 1500);
         };
 
-        // v103: 清掉所有 dismissed 標記 (給用戶重試機會)
+        // v106: 清掉所有 dismissed 標記 (給用戶重試機會)
         window.clearAllBiometricDismissed = () => {
             const keys = [];
             for (let i = 0; i < localStorage.length; i++) {
@@ -1305,7 +1314,7 @@
                 if (k && k.startsWith('biometric_dismissed_')) keys.push(k);
             }
             keys.forEach(k => localStorage.removeItem(k));
-            console.log('[v103] 清掉 ' + keys.length + ' 個 dismissed 標記');
+            console.log('[v106] 清掉 ' + keys.length + ' 個 dismissed 標記');
             return keys.length;
         };
 
@@ -2260,14 +2269,14 @@
         };
 
         // ============ 留言板 (messages collection) ============
-        // v103 新增: 更新使用者最後活動時間 (用來判斷上線/離線)
+        // v106 新增: 更新使用者最後活動時間 (用來判斷上線/離線)
         window.updateLastSeen = async () => {
             if (!state.currentUser?.docId) return;
             try {
                 await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', state.currentUser.docId), {
                     lastSeen: serverTimestamp()
                 });
-                // v103: 只更新自己的 lastSeen, 不觸發整頁 render
+                // v106: 只更新自己的 lastSeen, 不觸發整頁 render
                 state.currentUser.lastSeen = Date.now();
                 const idx = (state.users || []).findIndex(u => u.docId === state.currentUser.docId);
                 if (idx >= 0) {
@@ -2309,7 +2318,7 @@
                 await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'messages'), data);
                 f.reset();
                 showToast('✓ 訊息已送出', 'success');
-                // v103: 不呼叫 renderApp() (避免畫面跳動), Firestore 監聽會自然更新畫面
+                // v106: 不呼叫 renderApp() (避免畫面跳動), Firestore 監聽會自然更新畫面
                 // 為了立即看到自己訊息, 手動 prepend 到訊息區
                 const container = document.getElementById('messagesContainer');
                 if (container) {
@@ -2324,22 +2333,22 @@
                     if (wasAtBottom) container.scrollTop = container.scrollHeight;
                 }
 
-                // v103 新增: 判斷收件人是否離線 (>5 分鐘沒動作), 離線才送 Telegram
+                // v106 新增: 判斷收件人是否離線 (>5 分鐘沒動作), 離線才送 Telegram
                 try {
                     const toUser = (state.users || []).find(u => u.uid === toUserId || u.name === toUserId || u.username === toUserId);
                     // 管理員 → 供應商: 不送 (供應商沒 Telegram)
                     if (state.currentUser?.role === 'admin' && toUser?.role === 'supplier') {
-                        console.log('[v103] 供應商無 Telegram, 略過通知');
+                        console.log('[v106] 供應商無 Telegram, 略過通知');
                     } else {
                         // 判斷離線
                         let isOffline = true;
                         if (toUser?.lastSeen) {
                             const lastSeenTime = toUser.lastSeen.seconds ? toUser.lastSeen.seconds * 1000 : new Date(toUser.lastSeen).getTime();
                             const secondsAgo = (Date.now() - lastSeenTime) / 1000;
-                            isOffline = secondsAgo > 60;  // v103: 1 分鐘
-                            console.log(`[v103] ${toUserName} 最後活動: ${secondsAgo.toFixed(0)} 秒前, 離線=${isOffline}`);
+                            isOffline = secondsAgo > 60;  // v106: 1 分鐘
+                            console.log(`[v106] ${toUserName} 最後活動: ${secondsAgo.toFixed(0)} 秒前, 離線=${isOffline}`);
                         } else {
-                            console.log(`[v103] ${toUserName} 沒 lastSeen, 預設離線`);
+                            console.log(`[v106] ${toUserName} 沒 lastSeen, 預設離線`);
                         }
                         if (isOffline) {
                             // 收件人是 client: 給 client (透過 chat_id)
@@ -2353,12 +2362,12 @@
                                 toRole: toUser?.role || 'admin',
                                 content: content
                             });
-                            console.log('[v103] ✅ Telegram 訊息通知已送出 (對方離線)');
+                            console.log('[v106] ✅ Telegram 訊息通知已送出 (對方離線)');
                         } else {
-                            console.log('[v103] 對方在線, 不送 Telegram');
+                            console.log('[v106] 對方在線, 不送 Telegram');
                         }
                     }
-                } catch (e) { console.error('[v103] Telegram 訊息通知失敗:', e); }
+                } catch (e) { console.error('[v106] Telegram 訊息通知失敗:', e); }
             } catch (err) {
                 console.error('[sendMessage]', err);
                 showToast('送出失敗: ' + (err.message || '未知錯誤'), 'error', 5000);
@@ -3071,7 +3080,7 @@
             </div>`;
         }
 
-        // v103: 密碼眼睛開關 helper
+        // v106: 密碼眼睛開關 helper
         window.togglePassword = (id) => {
             const input = document.getElementById(id);
             if (!input) return;
@@ -3133,7 +3142,7 @@
                         </button>
                     </div>
                     ${(() => {
-                        // v103: 在 select 模式也顯示生物辨識 (不用先選角色)
+                        // v106: 在 select 模式也顯示生物辨識 (不用先選角色)
                         // 先檢查是不是內建瀏覽器
                         const inApp = _isInAppBrowser();
                         if (inApp) {
@@ -3197,7 +3206,7 @@
                         <div class="pt-2"><button type="submit" ${state.isLoading?'disabled':''} class="w-full bg-[#255a9e] hover:bg-[#1e4880] text-white font-bold py-3.5 rounded-xl shadow-lg shadow-blue-900/20 transition-all transform active:scale-95 flex items-center justify-center tracking-wide">${state.isLoading ? '連線中...' : '登入系統 Login'}</button></div>
                     </form>
                     ${(() => {
-                        // v103: form 模式也顯示生物辨識 (不依賴 state.users, 直接顯示)
+                        // v106: form 模式也顯示生物辨識 (不依賴 state.users, 直接顯示)
                         if (!_isWebAuthnSupported()) return '';
                         const registered = window.getRegisteredBiometricUsers();
                         if (registered.length === 0) return '';
@@ -3235,7 +3244,7 @@
                     </div>
                 </div>`;
             }
-            return `<div class="min-h-dvh w-full flex items-center justify-center p-0 md:p-4 login-bg-pattern"><div class="w-full md:max-w-5xl bg-white md:rounded-[2rem] shadow-none md:shadow-[0_20px_60px_-15px_rgba(0,0,0,0.3)] overflow-hidden flex min-h-dvh md:min-h-[600px] animate-fade-in relative z-10 flex-col md:flex-row">${content}${visualPanel}</div><div class="fixed bottom-2 md:bottom-4 text-slate-400/50 text-[10px] md:text-xs font-mono w-full text-center pointer-events-none">System Ver v103 生物辨識版 (2026-08-19)</div></div>`;
+            return `<div class="min-h-dvh w-full flex items-center justify-center p-0 md:p-4 login-bg-pattern"><div class="w-full md:max-w-5xl bg-white md:rounded-[2rem] shadow-none md:shadow-[0_20px_60px_-15px_rgba(0,0,0,0.3)] overflow-hidden flex min-h-dvh md:min-h-[600px] animate-fade-in relative z-10 flex-col md:flex-row">${content}${visualPanel}</div><div class="fixed bottom-2 md:bottom-4 text-slate-400/50 text-[10px] md:text-xs font-mono w-full text-center pointer-events-none">System Ver v106 生物辨識版 (2026-08-19)</div></div>`;
         }
 
         function renderForgotModal() {
@@ -4694,7 +4703,7 @@
                     </div>
                 </div>
 
-                <!-- 客戶留言板 (v103 新樣式: 跟 sidebar 進入的相同) -->
+                <!-- 客戶留言板 (v106 新樣式: 跟 sidebar 進入的相同) -->
                 <div class="bg-white rounded-2xl shadow-xl overflow-hidden flex flex-col border-t-4 border-blue-500" style="min-height: 500px;">
                     <!-- 對話 header (v92 樣式) -->
                     <div class="p-4 border-b bg-white flex items-center gap-3">
@@ -5059,7 +5068,7 @@
             return `<div class="p-4 md:p-8 animate-fade-in h-full overflow-y-auto pt-20 md:pt-8 pb-24 md:pb-8">
                 <div class="max-w-6xl mx-auto">
                     ${(() => {
-                        // v103: 生物辨識狀態橫幅 (在公告下方)
+                        // v106: 生物辨識狀態橫幅 (在公告下方)
                         if (typeof _isWebAuthnSupported === 'undefined' || !_isWebAuthnSupported()) return '';
                         const username = state.currentUser?.username;
                         if (!username) return '';
@@ -5734,7 +5743,7 @@
             return renderMessagesAdmin();
         }
 
-        // ============ v103 新版: 簡單對話框 (客戶/供應商用) ============
+        // ============ v106 新版: 簡單對話框 (客戶/供應商用) ============
         function renderMessagesSimple() {
             const role = state.currentUser?.role;
             const myUid = state.currentUser?.uid;
@@ -5756,7 +5765,7 @@
                 const admin = (state.users || []).find(u => u.role === 'admin');
                 if (!admin?.lastSeen) return true;
                 const lastSeenTime = admin.lastSeen.seconds ? admin.lastSeen.seconds * 1000 : new Date(admin.lastSeen).getTime();
-                return (Date.now() - lastSeenTime) > 60 * 1000;  // v103: 1 分鐘
+                return (Date.now() - lastSeenTime) > 60 * 1000;  // v106: 1 分鐘
             })();
             const statusText = isOffline ? '🔴 離線' : '🟢 線上';
 
@@ -5796,7 +5805,7 @@
             </div>`;
         }
 
-        // ============ v103 新版: 管理員版 (對話清單 + 對話) ============
+        // ============ v106 新版: 管理員版 (對話清單 + 對話) ============
         function renderMessagesAdmin() {
             // 找出所有對話對象 (排除自己)
             const conversations = {};
@@ -5926,7 +5935,7 @@
             }
             const bubbleColor = isMine ? 'bg-blue-600 text-white' : 'bg-white border';
             const dir = isMine ? 'flex-row-reverse' : '';
-            // v103: 管理員可在每則訊息加刪除按鈕
+            // v106: 管理員可在每則訊息加刪除按鈕
             const canDelete = viewerRole === 'admin' && m.docId;
             return `<div class="flex gap-2 ${dir} group">
                 <div class="w-8 h-8 rounded-full ${roleColor} text-white flex items-center justify-center text-xs font-bold shrink-0">${(displayName||'?')[0]}</div>
@@ -5943,7 +5952,7 @@
         // 管理員選擇對話
         window.selectConversation = (convId) => { state.activeMessageConv = convId; renderApp(); };
 
-        // v103: 刪除單則訊息 (管理員)
+        // v106: 刪除單則訊息 (管理員)
         window.deleteMessage = async (docId) => {
             if (!docId) return;
             if (!confirm('確定刪除這則訊息?')) return;
@@ -5951,12 +5960,12 @@
                 await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'messages', docId));
                 showToast('✓ 訊息已刪除', 'success', 2000);
             } catch (e) {
-                console.error('[v103 刪除訊息失敗]', e);
+                console.error('[v106 刪除訊息失敗]', e);
                 showToast('刪除失敗: ' + e.message, 'error', 3000);
             }
         };
 
-        // v103: 刪除整個對話 (管理員, 一次清掉某人所有訊息)
+        // v106: 刪除整個對話 (管理員, 一次清掉某人所有訊息)
         window.deleteConversation = async (partnerId, partnerName) => {
             if (!partnerId) return;
             const msgCount = (state.messages || []).filter(m => {
@@ -5996,7 +6005,7 @@
                 }
                 showToast(`✓ 已刪除 ${success} 則${fail > 0 ? ` (${fail} 失敗)` : ''}`, 'success', 3000);
             } catch (e) {
-                console.error('[v103 刪除對話失敗]', e);
+                console.error('[v106 刪除對話失敗]', e);
                 showToast('刪除失敗: ' + e.message, 'error', 3000);
             }
         };
@@ -6180,7 +6189,7 @@
                             state.currentView = 'welcome';
                             state.loginMode = 'select';
                             renderApp();
-                            // v103: 自動登入也啟動 lastSeen 定期更新
+                            // v106: 自動登入也啟動 lastSeen 定期更新
                             setTimeout(() => { if (window.updateLastSeen) window.updateLastSeen(); }, 1000);
                             setInterval(() => { if (window.updateLastSeen) window.updateLastSeen(); }, 60000);
                         }
