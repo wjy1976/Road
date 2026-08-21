@@ -2,7 +2,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>羅德精技醫材訂貨系統 v114 生物辨識版 (2026-08-19)</title>
+    <title>羅德精技醫材訂貨系統 v121 生物辨識版 (2026-08-19)</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Lucide Icons -->
@@ -155,8 +155,8 @@
                 showToast('異步錯誤: ' + (e.reason?.message || e.reason), 'error', 8000);
             }
         });
-        console.log('✅ v114 已載入 (2026-08-19 v114 留言板升級)');
-        // v114 修正: 移除提前呼叫 _isInAppBrowser (避免 TDZ 錯誤)
+        console.log('✅ v121 已載入 (2026-08-19 v121 留言板升級)');
+        // v121 修正: 移除提前呼叫 _isInAppBrowser (避免 TDZ 錯誤)
 
         // 您的 LINE 官方帳號連結 (用於聯絡我們按鈕)，例如 https://lin.ee/xxxxxx
         const LINE_OA_LINK = "https://line.me/ti/p/~d9365003";
@@ -242,7 +242,9 @@
             historyTab: 'orders', 
             dashboardView: 'main',
             crmView: 'type', crmType: 'client', crmSearch: '',
-            orderFilter: 'all', orderSearch: '',
+            orderFilter: 'all', orderSearch: '', orderSort: (() => { try { return localStorage.getItem('orderSort') || 'newest'; } catch(e) { return 'newest'; } })(),
+            orderView: (() => { try { return localStorage.getItem('orderView') || 'list'; } catch(e) { return 'list'; } })(),  // v121: list | byClient
+            selectedClientId: null,  // v121: 點客戶後看訂單
             adminOrderDraft: { clientId: '', items: [] },
             adminOrderFilters: { clientCity: '', clientSearch: '', prodCategory: '', prodSupplier: '', prodId: '' },
             repairAdminTab: 'pending' 
@@ -274,13 +276,13 @@
             return '個';
         };
 
-        // v114: GAS 通訊密鑰 (前後端共用, 防止被亂打)
+        // v121: GAS 通訊密鑰 (前後端共用, 防止被亂打)
         const GAS_SECRET = 'ROAD_BIOMED_2026_V111_SECRET';
 
         const sendBackendNotification = async (payload) => {
             if (!LINE_API_URL) return;
             try {
-                // v114: 加上 secret + origin, GAS 端會驗證
+                // v121: 加上 secret + origin, GAS 端會驗證
                 const securedPayload = {
                     ...payload,
                     secret: GAS_SECRET,
@@ -293,9 +295,9 @@
                     headers: { 'Content-Type': 'text/plain' },
                     body: JSON.stringify(securedPayload)
                 });
-                console.log("[v114 通知] 已送出:", payload.type);
+                console.log("[v121 通知] 已送出:", payload.type);
             } catch (error) {
-                console.error("[v114 通知] 送出失敗:", error);
+                console.error("[v121 通知] 送出失敗:", error);
             }
         };
 
@@ -303,6 +305,43 @@
         window.handleOrderSearch = (val) => {
             state.orderSearch = val;
             window.refreshOrderListUI();
+        };
+        window.setOrderSort = (sort) => {
+            state.orderSort = sort;
+            try { localStorage.setItem('orderSort', sort); } catch(e) {}
+            window.refreshOrderListUI();
+        };
+        window.setOrderView = (view) => {
+            state.orderView = view;
+            state.selectedClientId = null;
+            try { localStorage.setItem('orderView', view); } catch(e) {}
+            renderApp();
+        };
+        window.openClientOrders = (clientId) => {
+            state.selectedClientId = clientId;
+            renderApp();
+        };
+        window.closeClientOrders = () => {
+            state.selectedClientId = null;
+            renderApp();
+        };
+
+        // v121: 計算客戶訂單彙總
+        window.getClientOrderSummary = (orders) => {
+            const summary = {};
+            orders.forEach(o => {
+                const cid = o.clientId;
+                if (!cid) return;
+                if (!summary[cid]) {
+                    summary[cid] = { clientId: cid, clientName: o.clientName || cid, total: 0, count: 0, pending: 0, unpaid: 0, unpaidAmount: 0, lastDate: '', items: [] };
+                }
+                summary[cid].total += (o.totalAmount || 0);
+                summary[cid].count += 1;
+                if (o.status === 'pending') summary[cid].pending += 1;
+                if (o.paymentStatus === 'unpaid') { summary[cid].unpaid += 1; summary[cid].unpaidAmount += (o.totalAmount || 0); }
+                if (!summary[cid].lastDate || o.date > summary[cid].lastDate) summary[cid].lastDate = o.date;
+            });
+            return Object.values(summary);
         };
 
         window.refreshOrderListUI = () => {
@@ -328,6 +367,7 @@
             
             if ((isAdmin || isSupplier) && state.orderFilter !== 'all') {
                 if(state.orderFilter === 'pending') orders = orders.filter(o => o.status === 'pending');
+                else if(state.orderFilter === 'completed') orders = orders.filter(o => o.status === 'completed' || o.status === 'shipped');
                 else if(state.orderFilter === 'unpaid') orders = orders.filter(o => o.paymentStatus === 'unpaid');
             }
             
@@ -335,6 +375,25 @@
                 const term = state.orderSearch.toLowerCase();
                 orders = orders.filter(o => o.id.toLowerCase().includes(term) || o.clientName.toLowerCase().includes(term) || o.items.some(i => i.name.toLowerCase().includes(term) || (i.category && CAT_MAP[i.category] && CAT_MAP[i.category].includes(term)) || (i.supplierName && i.supplierName.toLowerCase().includes(term))));
             }
+
+            // v121: 訂單排序
+            const sortBy = state.orderSort || 'newest';
+            const ts = o => {
+                if (!o.date) return 0;
+                const d = new Date(o.date);
+                return d.getTime() || 0;
+            };
+            if (sortBy === 'newest') orders.sort((a, b) => ts(b) - ts(a));
+            else if (sortBy === 'oldest') orders.sort((a, b) => ts(a) - ts(b));
+            else if (sortBy === 'client') orders.sort((a, b) => (a.clientName || '').localeCompare(b.clientName || ''));
+            else if (sortBy === 'amount_desc') orders.sort((a, b) => (b.totalAmount || 0) - (a.totalAmount || 0));
+            else if (sortBy === 'amount_asc') orders.sort((a, b) => (a.totalAmount || 0) - (b.totalAmount || 0));
+            else if (sortBy === 'pending_first') orders.sort((a, b) => {
+                const aPending = a.status === 'pending' ? 0 : 1;
+                const bPending = b.status === 'pending' ? 0 : 1;
+                if (aPending !== bPending) return aPending - bPending;
+                return ts(b) - ts(a);
+            });
 
             if (orders.length === 0) return `<tr><td colspan="${isAdmin ? 11 : ((isAdmin || isSupplier) ? 10 : 8)}" class="p-8 text-center text-slate-400">沒有符合的訂單</td></tr>`;
             // (原邏輯: admin 11 (多一欄 客戶紙軸), supplier 10, client 8)
@@ -543,7 +602,7 @@
             console.log('🔧 [v74 r4] deleteOrder 開始, docId:', docId);
             if(e) { e.preventDefault(); e.stopPropagation(); }
             if(!docId) return showToast("訂單ID無效", "error");
-            // v114: 權限檢查 (管理員/供應商可刪除訂單, 客戶不能)
+            // v121: 權限檢查 (管理員/供應商可刪除訂單, 客戶不能)
             const role = state.currentUser?.role;
             if (role !== 'admin' && role !== 'supplier') {
                 return showToast("您沒有刪除訂單的權限", "error", 3000);
@@ -753,16 +812,16 @@
         };
 
         // --- Data Listeners ---
-        // v114: 全域 renderApp 防抖 (1 秒內多次 render 只跑一次)
+        // v121: 全域 renderApp 防抖 (1 秒內多次 render 只跑一次)
         let _renderDebounce = null;
         const _debouncedRender = (source) => {
             if (_renderDebounce) {
-                console.log('[v114 防抖] renderApp 已在排隊, 跳過 (' + source + ')');
+                console.log('[v121 防抖] renderApp 已在排隊, 跳過 (' + source + ')');
                 return;
             }
             _renderDebounce = setTimeout(() => {
                 _renderDebounce = null;
-                console.log('[v114 防抖] 執行 renderApp (來源: ' + source + ')');
+                console.log('[v121 防抖] 執行 renderApp (來源: ' + source + ')');
                 renderApp();
             }, 100);
         };
@@ -778,7 +837,7 @@
                     if(col==='orders') {
                         state.orders = data.sort((a,b)=>new Date(b.date)-new Date(a.date));
                         window.refreshOrderListUI();
-                        console.log('[v114] orders 更新 (' + data.length + ' 筆)');
+                        console.log('[v121] orders 更新 (' + data.length + ' 筆)');
                     }
                     else if(col==='repairs') state.repairs = data.sort((a,b)=>b.createdAt - a.createdAt);
                     else if(col==='expenses') state.expenses = data.sort((a,b)=>new Date(b.date)-new Date(a.date));
@@ -787,29 +846,29 @@
                     else if(col==='messages') {
                         const wasChanged = JSON.stringify((state.messages||[]).map(m=>m.id)) !== JSON.stringify(data.map(m=>m.id));
                         state.messages = data;
-                        if (wasChanged) console.log('[v114] messages 更新 (' + data.length + ' 筆)');
+                        if (wasChanged) console.log('[v121] messages 更新 (' + data.length + ' 筆)');
                     }
                     else if(col==='users') {
-                        // v114: JSON.stringify 加排序 (Firestore 回傳順序不固定)
+                        // v121: JSON.stringify 加排序 (Firestore 回傳順序不固定)
                         const stripForCompare = u => {
                             const r = {};
                             Object.keys(u).forEach(k => {
                                 if (k !== 'lastSeen' && k !== 'id' && k !== 'docId') r[k] = u[k];
                             });
-                            // v114 修法: 第二個參數是 sorted keys, 保證輸出順序一致
+                            // v121 修法: 第二個參數是 sorted keys, 保證輸出順序一致
                             return JSON.stringify(r, Object.keys(r).sort());
                         };
                         const oldSig = (state.users || []).map(stripForCompare).sort().join('|');
                         const newSig = data.map(stripForCompare).sort().join('|');
                         const isInitialLoad = !state.users || state.users.length === 0;
                         let dataChanged = oldSig !== newSig;
-                        // v114: 詳細 diff - 直接印出 JSON 差異
+                        // v121: 詳細 diff - 直接印出 JSON 差異
                         if (dataChanged && !isInitialLoad) {
                             const oldMap = {};
                             (state.users || []).forEach(u => { if (u.docId) oldMap[u.docId] = u; });
                             for (const newU of data) {
                                 const oldU = oldMap[newU.docId];
-                                if (!oldU) { console.log('[v114] 新 user:', newU.username || newU.docId); continue; }
+                                if (!oldU) { console.log('[v121] 新 user:', newU.username || newU.docId); continue; }
                                 const oldS = stripForCompare(oldU);
                                 const newS = stripForCompare(newU);
                                 if (oldS !== newS) {
@@ -819,7 +878,7 @@
                                     const newKeys = Object.keys(newObj);
                                     const onlyInNew = newKeys.filter(k => !(k in oldObj));
                                     const onlyInOld = oldKeys.filter(k => !(k in newObj));
-                                    console.log(`[v114] user "${newU.username || newU.docId}" 差異:`);
+                                    console.log(`[v121] user "${newU.username || newU.docId}" 差異:`);
                                     if (onlyInNew.length) console.log(`  + 新增: ${onlyInNew.join(', ')}`);
                                     if (onlyInOld.length) console.log(`  - 刪除: ${onlyInOld.join(', ')}`);
                                     const allKeys = new Set([...oldKeys, ...newKeys]);
@@ -854,17 +913,17 @@
                         if (!state.currentUser || state.currentView === 'login') {
                             return;
                         }
-                        // v114: 純 lastSeen 更新絕對不重畫
+                        // v121: 純 lastSeen 更新絕對不重畫
                         if (!dataChanged && !isInitialLoad) {
-                            console.log('[v114] users 純 lastSeen 更新, 跳過 renderApp');
+                            console.log('[v121] users 純 lastSeen 更新, 跳過 renderApp');
                             return;
                         }
                         if (isInitialLoad) {
-                            console.log('[v114] users 初次載入');
+                            console.log('[v121] users 初次載入');
                             _debouncedRender('users-initial');
                             return;
                         }
-                        console.log('[v114] users 真的變了, render');
+                        console.log('[v121] users 真的變了, render');
                         _debouncedRender('users-changed');
                         return;
                     }
@@ -875,9 +934,9 @@
                         _debouncedRender(col);
                     }
                 }, err => {
-                    // v114: 容忍 IndexedDB 錯誤 (常見於離線/網路不穩)
+                    // v121: 容忍 IndexedDB 錯誤 (常見於離線/網路不穩)
                     if (err && err.message && err.message.includes('IndexedDB')) {
-                        console.warn('[v114] IndexedDB 警告 (不影響功能):', err.message.substring(0, 80));
+                        console.warn('[v121] IndexedDB 警告 (不影響功能):', err.message.substring(0, 80));
                         return;
                     }
                     console.error(err);
@@ -897,13 +956,13 @@
             };
             initAuthFlow();
             onAuthStateChanged(auth, u => { if(u) initDataListeners(); });
-            // v114: 頁面載入時, 自動清掉舊的 dismissed 標記 (給用戶重試機會)
+            // v121: 頁面載入時, 自動清掉舊的 dismissed 標記 (給用戶重試機會)
             if (window.clearAllBiometricDismissed) window.clearAllBiometricDismissed();
-            // v114: 頁面載入時, 自動嘗試生物辨識
+            // v121: 頁面載入時, 自動嘗試生物辨識
             setTimeout(() => { if (window.autoTryBiometric) window.autoTryBiometric(); }, 2500);
         }
 
-        // --- v114 生物辨識登入 (WebAuthn) ---
+        // --- v121 生物辨識登入 (WebAuthn) ---
         // 用手機內建的 Face ID / Touch ID / 指紋, 不存任何生物資料
         const _bioBufferToBase64URL = buffer => {
             const bytes = new Uint8Array(buffer);
@@ -924,7 +983,7 @@
                    typeof navigator.credentials?.create === 'function' &&
                    typeof navigator.credentials?.get === 'function';
         };
-        // v114: 更精確的偵測 (檢查裝置是否有「平台生物辨識器」)
+        // v121: 更精確的偵測 (檢查裝置是否有「平台生物辨識器」)
         const _isUVPlatformAvailable = async () => {
             if (!_isWebAuthnSupported()) return false;
             try {
@@ -933,12 +992,12 @@
                 }
                 return true;  // 沒 API 就假設可用 (讓瀏覽器自己判斷)
             } catch (e) {
-                console.warn('[v114 生物辨識] 偵測失敗:', e);
+                console.warn('[v121 生物辨識] 偵測失敗:', e);
                 return true;
             }
         };
 
-        // v114: 偵測是否在 LINE/IG/FB 內建瀏覽器 (這些不支援完整 WebAuthn)
+        // v121: 偵測是否在 LINE/IG/FB 內建瀏覽器 (這些不支援完整 WebAuthn)
         const _isInAppBrowser = () => {
             const ua = navigator.userAgent.toLowerCase();
             if (ua.includes('line/')) return 'LINE';
@@ -952,17 +1011,17 @@
             if (!_isWebAuthnSupported()) {
                 return { success: false, error: '此裝置或瀏覽器不支援生物辨識' };
             }
-            // v114: 偵測內建瀏覽器 (LINE/FB/IG), 這些不支援 WebAuthn
+            // v121: 偵測內建瀏覽器 (LINE/FB/IG), 這些不支援 WebAuthn
             const inApp = _isInAppBrowser();
             if (inApp) {
                 return { success: false, error: '請用 Safari 開啟此網址 (不要用 ' + inApp + ' 內建瀏覽器)' };
             }
-            // v114: 不預檢查, 直接嘗試
+            // v121: 不預檢查, 直接嘗試
             const uvCheck = await _isUVPlatformAvailable();
-            console.log('[v114 生物辨識] 平台偵測 (僅參考):', uvCheck);
-            console.log('[v114 生物辨識] 開始註冊:', username);
+            console.log('[v121 生物辨識] 平台偵測 (僅參考):', uvCheck);
+            console.log('[v121 生物辨識] 開始註冊:', username);
             try {
-                // v114: 用 crypto.getRandomValues 確保 challenge 是隨機的
+                // v121: 用 crypto.getRandomValues 確保 challenge 是隨機的
                 const challenge = new Uint8Array(32);
                 crypto.getRandomValues(challenge);
                 const userId = new TextEncoder().encode(username);
@@ -975,7 +1034,7 @@
                             { alg: -7, type: 'public-key' },
                             { alg: -257, type: 'public-key' }
                         ],
-                        // v114: 拿掉 residentKey, iOS Safari 14 相容性較好
+                        // v121: 拿掉 residentKey, iOS Safari 14 相容性較好
                         authenticatorSelection: {
                             authenticatorAttachment: 'platform',
                             userVerification: 'required'
@@ -990,13 +1049,13 @@
                     credentialId: _bioBufferToBase64URL(credential.rawId),
                     createdAt: new Date().toISOString()
                 };
-                // v114: 註冊成功後, 順便清掉 dismissed 標記 (重新給機會)
+                // v121: 註冊成功後, 順便清掉 dismissed 標記 (重新給機會)
                 try { localStorage.removeItem(`biometric_dismissed_${username}`); } catch(e) {}
                 localStorage.setItem(`biometric_${username}`, JSON.stringify(credentialData));
-                console.log('[v114 生物辨識] 註冊成功:', username, credentialData);
+                console.log('[v121 生物辨識] 註冊成功:', username, credentialData);
                 return { success: true };
             } catch (e) {
-                console.error('[v114 生物辨識] 註冊失敗:', e.name, e.message);
+                console.error('[v121 生物辨識] 註冊失敗:', e.name, e.message);
                 if (e.name === 'NotAllowedError') return { success: false, error: '已取消設定' };
                 if (e.name === 'SecurityError') return { success: false, error: '請用 HTTPS 開啟 (非 file://)' };
                 if (e.name === 'NotSupportedError') return { success: false, error: '此裝置不支援生物辨識' };
@@ -1009,33 +1068,36 @@
             if (!_isWebAuthnSupported()) return { success: false, error: '此裝置不支援生物辨識' };
             const stored = localStorage.getItem(`biometric_${username}`);
             if (!stored) {
-                console.warn('[v114 生物辨識] 找不到註冊資料:', `biometric_${username}`);
+                console.warn('[v121 生物辨識] 找不到註冊資料:', `biometric_${username}`);
                 return { success: false, error: '此帳號尚未註冊生物辨識' };
             }
             let credData;
             try { credData = JSON.parse(stored); } catch(e) {
-                console.error('[v114 生物辨識] 解析失敗:', e);
+                console.error('[v121 生物辨識] 解析失敗:', e);
                 return { success: false, error: '資料損毀, 請重新註冊' };
             }
             if (!credData.credentialId) {
-                console.error('[v114 生物辨識] 沒有 credentialId:', credData);
+                console.error('[v121 生物辨識] 沒有 credentialId:', credData);
                 return { success: false, error: '註冊資料異常, 請重新註冊' };
             }
-            console.log('[v114 生物辨識] 開始驗證:', username);
+            console.log('[v121 生物辨識] 開始驗證:', username);
             try {
                 const challenge = new Uint8Array(32);
                 crypto.getRandomValues(challenge);
                 const credential = await navigator.credentials.get({
                     publicKey: {
                         challenge,
-                        // v114: iOS Safari 不支援 transports: ['internal'], 拿掉
+                        // v121: iOS Safari 不支援 transports: ['internal'], 拿掉
                         allowCredentials: [{
                             id: _bioBase64URLToBuffer(credData.credentialId),
                             type: 'public-key'
                         }],
                         userVerification: 'required',
                         timeout: 60000
-                    }
+                    },
+                    // v121: 允許瀏覽器在沒有使用者手勢時自動觸發 (如果有對應 credential)
+                    mediation: 'optional',
+                    signal: undefined
                 });
                 if (!credential) return { success: false, error: '驗證失敗' };
                 return { success: true, username };
@@ -1049,7 +1111,7 @@
             const users = [];
             for (let i = 0; i < localStorage.length; i++) {
                 const key = localStorage.key(i);
-                // v114 修正: 排除 dismissed_* 和 lastAutoTry 這些非用戶 key
+                // v121 修正: 排除 dismissed_* 和 lastAutoTry 這些非用戶 key
                 if (key && key.startsWith('biometric_') &&
                     !key.startsWith('biometric_dismissed_') &&
                     !key.startsWith('biometric_lastAutoTry')) {
@@ -1062,7 +1124,7 @@
                             users.push({ username, ...data });
                         }
                     } catch (e) {
-                        console.warn('[v114 生物辨識] 解析失敗:', key, e);
+                        console.warn('[v121 生物辨識] 解析失敗:', key, e);
                     }
                 }
             }
@@ -1096,7 +1158,7 @@
 
         // --- Auth Logic ---
         window.setLoginMode = m => { state.loginMode = m; renderApp(); };
-        // v114: 處理生物辨識登入按鈕
+        // v121: 處理生物辨識登入按鈕
         window.handleBiometricLogin = async (username) => {
             if (!_isWebAuthnSupported()) return showToast('此裝置不支援生物辨識', 'error');
             if (state.users.length === 0) {
@@ -1106,15 +1168,19 @@
                 }
                 if (state.users.length === 0) return showToast('系統尚未準備好, 請稍候', 'error');
             }
-            showToast('請用生物辨識驗證...', 'info', 2000);
+            // v121: 顯示載入動畫
+            window.showBiometricLoading('生物辨識登入中', '請用 Face ID / 指紋 掃描');
             const result = await window.loginWithBiometric(username);
             if (!result.success) {
+                window.hideBiometricLoading();
                 if (result.error && !result.error.includes('取消')) {
                     showToast(result.error, 'error', 3000);
                 }
                 return;
             }
+            window.showBiometricLoading('登入成功!', '準備進入系統...');
             const loginResult = await window.completeBiometricLogin(username);
+            window.hideBiometricLoading();
             if (!loginResult.success) {
                 showToast(loginResult.error, 'error', 3000);
             }
@@ -1135,6 +1201,14 @@
             const f = e.target;
             const inputUser = f.username.value.trim();
             const inputPass = f.password.value.trim();
+            // v121: 處理「記住我的帳號」checkbox
+            try {
+                if (f.rememberMe && f.rememberMe.checked) {
+                    localStorage.setItem('rememberedUsername', inputUser);
+                } else {
+                    localStorage.removeItem('rememberedUsername');
+                }
+            } catch(e) {}
             // 先找帳號 (不分密碼)
             let u = state.users.find(x => x.username === inputUser || x.phone === inputUser);
 
@@ -1175,13 +1249,11 @@
                     state.currentView = 'welcome';
                     try { localStorage.setItem('lastLoggedInUser', u.username); } catch (e) {}
                     renderApp();
-                    // v114: 登入後更新 lastSeen, 啟動定期更新
+                    // v121: 登入後更新 lastSeen, 啟動定期更新
                     setTimeout(() => { if (window.updateLastSeen) window.updateLastSeen(); }, 1000);
                     setInterval(() => { if (window.updateLastSeen) window.updateLastSeen(); }, 60000); // 每分鐘更新
-                    // v114: 詢問是否啟用生物辨識
-                    setTimeout(() => window.maybePromptBiometric(u.username), 1500);
-                    try { localStorage.removeItem(`biometric_dismissed_${u.username}`); } catch(e) {}  // v114: 清掉舊 dismiss, 讓用戶重新看到提示
-                    // v114: 補舊訊息的 toUserId (一次性, 背景跑)
+                    // v121: 自動彈出已移除 (改用歡迎頁橫幅被動顯示, 不再主動煩用戶)
+                    // v121: 補舊訊息的 toUserId (一次性, 背景跑)
                     setTimeout(() => { if (window.backfillOldMessages) window.backfillOldMessages(); }, 3000);
                     return;
                 } catch (err) {
@@ -1196,14 +1268,14 @@
                 state.currentView = 'welcome';
                 try { localStorage.setItem('lastLoggedInUser', u.username); } catch (e) {}
                 showToast(`✓ 歡迎回來 ${u.name}`, 'success', 500);
-                // v114: 登入後更新 lastSeen, 啟動定期更新
+                // v121: 登入後更新 lastSeen, 啟動定期更新
                 setTimeout(() => { if (window.updateLastSeen) window.updateLastSeen(); }, 1000);
                 setInterval(() => { if (window.updateLastSeen) window.updateLastSeen(); }, 60000); // 每分鐘更新
-                // v114: 詢問是否啟用生物辨識
-                setTimeout(() => window.maybePromptBiometric(u.username), 1500);
-                try { localStorage.removeItem(`biometric_dismissed_${u.username}`); } catch(e) {}  // v114: 清掉舊 dismiss
-                // v114: 補舊訊息 toUserId
+                // v121: 自動彈出已移除 (改用歡迎頁橫幅被動顯示, 不再主動煩用戶)
+                // v121: 補舊訊息 toUserId
                 setTimeout(() => { if (window.backfillOldMessages) window.backfillOldMessages(); }, 3000);
+                // v121: 嘗試自動生物辨識 (零點擊登入)
+                setTimeout(() => { if (window.tryAutoBiometric) window.tryAutoBiometric(); }, 2000);
                 // 背景: 自動補上 Firebase Auth uid (如果有登入過) + 同步 state.currentUser
                 setTimeout(() => {
                     if (auth.currentUser?.uid) {
@@ -1220,58 +1292,40 @@
             return showToast('帳號或密碼錯誤', 'error');
         };
 
-        // v114: 詢問是否啟用生物辨識 (首次登入後, 用浮動按鈕)
-        window.maybePromptBiometric = async (username) => {
-            if (!_isWebAuthnSupported()) {
-                console.log('[v114 生物辨識] 此裝置不支援');
-                return;
+        // v121: 自動彈出提示已移除 (改用歡迎頁橫幅 + 登入頁快速啟用, 避免擋內容)
+
+        // v121: 判斷是否應該顯示生物辨識選項
+        // 規則: 1) 瀏覽器不支援 → 不顯示
+        //       2) 手機版 → 顯示 (iOS/Android 都有)
+        //       3) 電腦版 → 檢查真的有硬體才顯示
+        window.shouldShowBiometricOption = () => {
+            if (!_isWebAuthnSupported()) return false;
+            // 手機版: 一定顯示
+            if (window.innerWidth < 768) return true;
+            // 電腦版: 檢查 API 結果 (有快取)
+            if (typeof window._platformAuthAvailable === 'boolean') {
+                return window._platformAuthAvailable;
             }
-            if (window.isBiometricRegistered(username)) {
-                console.log('[v114 生物辨識] 此帳號已註冊, 跳過詢問');
-                return;
+            // 還沒檢查過, 開始檢查 (async)
+            if (window.PublicKeyCredential && window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) {
+                window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
+                    .then(available => {
+                        window._platformAuthAvailable = available;
+                        console.log('[v121 生物辨識] 電腦硬體檢查:', available ? '✅ 有硬體' : '❌ 沒硬體');
+                        if (typeof renderApp === 'function') renderApp();
+                    })
+                    .catch(err => {
+                        console.warn('[v121 生物辨識] 檢查失敗:', err);
+                        window._platformAuthAvailable = false;
+                    });
+            } else {
+                window._platformAuthAvailable = false;
             }
-            if (localStorage.getItem(`biometric_dismissed_${username}`) === '1') return;
-            console.log('[v114 生物辨識] 顯示啟用提示:', username);
-            window.showBiometricPrompt(username);
+            // 預設先顯示, 等檢查完會自動 rerender
+            return true;
         };
 
-        // v114: 顯示「啟用生物辨識」浮動提示
-        window.showBiometricPrompt = (username) => {
-            const old = document.getElementById('biometric-prompt');
-            if (old) old.remove();
-            const div = document.createElement('div');
-            div.id = 'biometric-prompt';
-            div.className = 'fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white rounded-2xl shadow-2xl p-4 max-w-sm w-[90%] animate-fade-in';
-            div.innerHTML = `
-                <div class="flex items-start gap-3">
-                    <div class="text-3xl shrink-0">👤</div>
-                    <div class="flex-1 min-w-0">
-                        <div class="font-black text-sm mb-1">啟用 Face ID / 指紋登入?</div>
-                        <div class="text-xs text-slate-300">下次一掃登入, 不用打密碼</div>
-                    </div>
-                    <button onclick="document.getElementById('biometric-prompt').remove(); try{localStorage.setItem('biometric_dismissed_${username}','1');}catch(e){};" class="text-slate-400 hover:text-white shrink-0">✕</button>
-                </div>
-                <div class="flex gap-2 mt-3">
-                    <button onclick="document.getElementById('biometric-prompt').remove(); try{localStorage.setItem('biometric_dismissed_${username}','1');}catch(e){};" class="flex-1 py-2 text-xs text-slate-300 hover:text-white rounded-lg">稍後</button>
-                    <button id="bio-prompt-yes" class="flex-1 py-2 bg-blue-500 hover:bg-blue-600 rounded-lg text-xs font-bold">立即啟用</button>
-                </div>
-            `;
-            document.body.appendChild(div);
-            document.getElementById('bio-prompt-yes').onclick = async () => {
-                div.remove();
-                showToast('請用 Face ID / 指紋 設定...', 'info', 2000);
-                const result = await window.registerBiometric(username);
-                if (result.success) {
-                    showToast('✓ 生物辨識已啟用, 下次可一掃登入', 'success', 3000);
-                    try { localStorage.removeItem(`biometric_dismissed_${username}`); } catch(e) {}
-                    if (typeof renderApp === 'function') renderApp();
-                } else if (result.error && !result.error.includes('取消')) {
-                    showToast('啟用失敗: ' + result.error, 'error', 4000);
-                }
-            };
-        };
-
-        // v114: 手動啟用生物辨識 (從歡迎頁 / 設定呼叫)
+        // v121: 手動啟用生物辨識 (從歡迎頁 / 設定呼叫)
         window.manualEnableBiometric = async () => {
             if (!_isWebAuthnSupported()) {
                 showToast('此裝置不支援生物辨識', 'error', 3000);
@@ -1286,8 +1340,10 @@
                 showToast('✓ 此帳號已啟用生物辨識', 'info', 2000);
                 return;
             }
-            showToast('請用 Face ID / 指紋 設定...', 'info', 2000);
+            // v121: 顯示載入動畫 (立刻跳出, 不再感覺慢)
+            window.showBiometricLoading('設定生物辨識中', '請用 Face ID / 指紋 掃描');
             const result = await window.registerBiometric(username);
+            window.hideBiometricLoading();  // 不管成功失敗都關掉動畫
             if (result.success) {
                 showToast('✓ 生物辨識已啟用', 'success', 3000);
                 try { localStorage.removeItem(`biometric_dismissed_${username}`); } catch(e) {}
@@ -1297,7 +1353,7 @@
             }
         };
 
-        // v114: 解除生物辨識綁定
+        // v121: 解除生物辨識綁定
         window.removeBiometricBinding = () => {
             const username = state.currentUser?.username;
             if (!username) return;
@@ -1311,7 +1367,7 @@
             renderApp();
         };
 
-        // v114: 診斷裝置的 WebAuthn 支援
+        // v121: 診斷裝置的 WebAuthn 支援
         window.diagnoseBiometric = async () => {
             const lines = [];
             lines.push('🔍 裝置診斷報告');
@@ -1348,22 +1404,22 @@
             alert(msg);
         };
 
-        // v114: 頁面載入時, 自動跳生物辨識
+        // v121: 頁面載入時, 自動跳生物辨識
         window.autoTryBiometric = async () => {
             if (!_isWebAuthnSupported()) {
-                console.log('[v114 生物辨識] 裝置不支援 WebAuthn');
+                console.log('[v121 生物辨識] 裝置不支援 WebAuthn');
                 return;
             }
             const lastUser = localStorage.getItem('lastLoggedInUser');
             if (!lastUser) {
-                console.log('[v114 生物辨識] 沒有上次的登入用戶');
+                console.log('[v121 生物辨識] 沒有上次的登入用戶');
                 return;
             }
             if (!window.isBiometricRegistered(lastUser)) {
-                console.log('[v114 生物辨識] 上次用戶未註冊:', lastUser);
+                console.log('[v121 生物辨識] 上次用戶未註冊:', lastUser);
                 return;
             }
-            console.log('[v114 生物辨識] 自動嘗試登入:', lastUser);
+            console.log('[v121 生物辨識] 自動嘗試登入:', lastUser);
             // 等 1.5 秒讓使用者看到頁面
             setTimeout(async () => {
                 showToast('👤 偵測到生物辨識, 一掃登入...', 'info', 2500);
@@ -1371,7 +1427,7 @@
             }, 1500);
         };
 
-        // v114: 清掉所有 dismissed 標記 (給用戶重試機會)
+        // v121: 清掉所有 dismissed 標記 (給用戶重試機會)
         window.clearAllBiometricDismissed = () => {
             const keys = [];
             for (let i = 0; i < localStorage.length; i++) {
@@ -1379,7 +1435,7 @@
                 if (k && k.startsWith('biometric_dismissed_')) keys.push(k);
             }
             keys.forEach(k => localStorage.removeItem(k));
-            console.log('[v114] 清掉 ' + keys.length + ' 個 dismissed 標記');
+            console.log('[v121] 清掉 ' + keys.length + ' 個 dismissed 標記');
             return keys.length;
         };
 
@@ -2334,14 +2390,14 @@
         };
 
         // ============ 留言板 (messages collection) ============
-        // v114 新增: 更新使用者最後活動時間 (用來判斷上線/離線)
+        // v121 新增: 更新使用者最後活動時間 (用來判斷上線/離線)
         window.updateLastSeen = async () => {
             if (!state.currentUser?.docId) return;
             try {
                 await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', state.currentUser.docId), {
                     lastSeen: serverTimestamp()
                 });
-                // v114: 只更新自己的 lastSeen, 不觸發整頁 render
+                // v121: 只更新自己的 lastSeen, 不觸發整頁 render
                 state.currentUser.lastSeen = Date.now();
                 const idx = (state.users || []).findIndex(u => u.docId === state.currentUser.docId);
                 if (idx >= 0) {
@@ -2350,7 +2406,66 @@
             } catch (e) { /* 靜默失敗 */ }
         };
 
-        // v114: 自動補舊訊息的 toUserId (一次性, 登入時跑)
+        // v121: 進入歡迎頁時自動嘗試生物辨識 (零點擊登入)
+        window.tryAutoBiometric = async () => {
+            if (typeof _isWebAuthnSupported === 'undefined' || !_isWebAuthnSupported()) return;
+            const user = state.currentUser;
+            if (!user) return;
+            const username = user.username;
+            // 沒註冊就跳過
+            if (!window.isBiometricRegistered(username)) return;
+            // 1.5 秒內不要重試 (避免每次 renderApp 都跳)
+            const lastTry = sessionStorage.getItem('biometric_lastAutoTry');
+            const now = Date.now();
+            if (lastTry && (now - parseInt(lastTry)) < 3000) return;
+            sessionStorage.setItem('biometric_lastAutoTry', now.toString());
+            console.log('[v121 自動辨識] 嘗試自動觸發 Face ID 給', username);
+            window.showBiometricLoading('自動辨識中', '請用 Face ID / 指紋 掃描');
+            const result = await window.loginWithBiometric(username);
+            if (!result.success) {
+                window.hideBiometricLoading();
+                console.log('[v121 自動辨識] 自動觸發失敗 (可能瀏覽器不支援零點擊):', result.error);
+                return;
+            }
+            window.showBiometricLoading('登入成功!', '準備進入系統...');
+            const loginResult = await window.completeBiometricLogin(username);
+            window.hideBiometricLoading();
+            if (!loginResult.success) {
+                showToast(loginResult.error, 'error', 3000);
+            }
+        };
+
+        // v121: 生物辨識載入動畫 (讓使用者知道系統在跑)
+        window.showBiometricLoading = (title = '準備中...', subtitle = '請稍候') => {
+            const old = document.getElementById('biometric-loading');
+            if (old) old.remove();
+            const div = document.createElement('div');
+            div.id = 'biometric-loading';
+            div.className = 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center backdrop-blur-sm px-4';
+            div.innerHTML = `
+                <div class="bg-white rounded-3xl shadow-2xl p-8 max-w-sm w-full text-center animate-fade-in">
+                    <div class="relative w-24 h-24 mx-auto mb-5">
+                        <div class="absolute inset-0 rounded-full border-4 border-blue-100"></div>
+                        <div class="absolute inset-0 rounded-full border-4 border-blue-500 border-t-transparent animate-spin"></div>
+                        <div class="absolute inset-0 flex items-center justify-center text-4xl">👤</div>
+                    </div>
+                    <div class="text-lg font-bold text-slate-800 mb-1">${title}</div>
+                    <div class="text-sm text-slate-500">${subtitle}</div>
+                    <div class="mt-4 flex justify-center gap-1">
+                        <div class="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 0ms"></div>
+                        <div class="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 150ms"></div>
+                        <div class="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 300ms"></div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(div);
+        };
+        window.hideBiometricLoading = () => {
+            const el = document.getElementById('biometric-loading');
+            if (el) el.remove();
+        };
+
+        // v121: 自動補舊訊息的 toUserId (一次性, 登入時跑)
         window.backfillOldMessages = async () => {
             if (!state.currentUser) return;
             const role = state.currentUser?.role;
@@ -2391,11 +2506,11 @@
                         });
                         updated++;
                     } catch (e) {
-                        console.warn('[v114 補資料失敗]', m.docId, e);
+                        console.warn('[v121 補資料失敗]', m.docId, e);
                     }
                 }
             }
-            if (updated > 0) console.log(`[v114] 補完 ${updated} 則舊訊息的 toUserId`);
+            if (updated > 0) console.log(`[v121] 補完 ${updated} 則舊訊息的 toUserId`);
         };
 
         window.sendMessage = async (e) => {
@@ -2431,7 +2546,7 @@
                 await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'messages'), data);
                 f.reset();
                 showToast('✓ 訊息已送出', 'success');
-                // v114: 不呼叫 renderApp() (避免畫面跳動), Firestore 監聽會自然更新畫面
+                // v121: 不呼叫 renderApp() (避免畫面跳動), Firestore 監聽會自然更新畫面
                 // 為了立即看到自己訊息, 手動 prepend 到訊息區
                 const container = document.getElementById('messagesContainer');
                 if (container) {
@@ -2446,22 +2561,22 @@
                     if (wasAtBottom) container.scrollTop = container.scrollHeight;
                 }
 
-                // v114 新增: 判斷收件人是否離線 (>5 分鐘沒動作), 離線才送 Telegram
+                // v121 新增: 判斷收件人是否離線 (>5 分鐘沒動作), 離線才送 Telegram
                 try {
                     const toUser = (state.users || []).find(u => u.uid === toUserId || u.name === toUserId || u.username === toUserId);
                     // 管理員 → 供應商: 不送 (供應商沒 Telegram)
                     if (state.currentUser?.role === 'admin' && toUser?.role === 'supplier') {
-                        console.log('[v114] 供應商無 Telegram, 略過通知');
+                        console.log('[v121] 供應商無 Telegram, 略過通知');
                     } else {
                         // 判斷離線
                         let isOffline = true;
                         if (toUser?.lastSeen) {
                             const lastSeenTime = toUser.lastSeen.seconds ? toUser.lastSeen.seconds * 1000 : new Date(toUser.lastSeen).getTime();
                             const secondsAgo = (Date.now() - lastSeenTime) / 1000;
-                            isOffline = secondsAgo > 60;  // v114: 1 分鐘
-                            console.log(`[v114] ${toUserName} 最後活動: ${secondsAgo.toFixed(0)} 秒前, 離線=${isOffline}`);
+                            isOffline = secondsAgo > 60;  // v121: 1 分鐘
+                            console.log(`[v121] ${toUserName} 最後活動: ${secondsAgo.toFixed(0)} 秒前, 離線=${isOffline}`);
                         } else {
-                            console.log(`[v114] ${toUserName} 沒 lastSeen, 預設離線`);
+                            console.log(`[v121] ${toUserName} 沒 lastSeen, 預設離線`);
                         }
                         if (isOffline) {
                             // 收件人是 client: 給 client (透過 chat_id)
@@ -2475,12 +2590,12 @@
                                 toRole: toUser?.role || 'admin',
                                 content: content
                             });
-                            console.log('[v114] ✅ Telegram 訊息通知已送出 (對方離線)');
+                            console.log('[v121] ✅ Telegram 訊息通知已送出 (對方離線)');
                         } else {
-                            console.log('[v114] 對方在線, 不送 Telegram');
+                            console.log('[v121] 對方在線, 不送 Telegram');
                         }
                     }
-                } catch (e) { console.error('[v114] Telegram 訊息通知失敗:', e); }
+                } catch (e) { console.error('[v121] Telegram 訊息通知失敗:', e); }
             } catch (err) {
                 console.error('[sendMessage]', err);
                 showToast('送出失敗: ' + (err.message || '未知錯誤'), 'error', 5000);
@@ -2493,7 +2608,7 @@
             } catch (err) { console.error(err); }
         };
         window.deleteMessage = async (msgId) => {
-            // v114: 權限檢查 (只有管理員可刪訊息)
+            // v121: 權限檢查 (只有管理員可刪訊息)
             if (state.currentUser?.role !== 'admin') {
                 return showToast("只有管理員可以刪除訊息", "error", 3000);
             }
@@ -2522,7 +2637,7 @@
                 return bTs - aTs;
             });
         };
-        // v114: 加上 toUserId 過濾 (避免看到別人的訊息)
+        // v121: 加上 toUserId 過濾 (避免看到別人的訊息)
         window.getUnreadMessageCount = () => {
             const role = state.currentUser?.role;
             const myUid = state.currentUser?.uid;
@@ -2543,7 +2658,7 @@
                 }
             }).length;
         };
-        // v114: 自動標記訊息為已讀 (加上 toUserId 過濾)
+        // v121: 自動標記訊息為已讀 (加上 toUserId 過濾)
         window.autoMarkMessagesRead = async () => {
             const role = state.currentUser?.role;
             if (!role) return;
@@ -3218,7 +3333,7 @@
             </div>`;
         }
 
-        // v114: 密碼眼睛開關 helper
+        // v121: 密碼眼睛開關 helper
         window.togglePassword = (id) => {
             const input = document.getElementById(id);
             if (!input) return;
@@ -3280,7 +3395,7 @@
                         </button>
                     </div>
                     ${(() => {
-                        // v114: 在 select 模式也顯示生物辨識 (不用先選角色)
+                        // v121: 在 select 模式也顯示生物辨識 (不用先選角色)
                         // 先檢查是不是內建瀏覽器
                         const inApp = _isInAppBrowser();
                         if (inApp) {
@@ -3339,13 +3454,18 @@
                     <button onclick="window.setLoginMode('select')" class="absolute top-6 left-6 md:top-8 md:left-8 text-slate-400 hover:text-[#255a9e] flex items-center font-bold text-sm transition-colors p-2 md:p-0"><i data-lucide="arrow-left" class="w-4 h-4 mr-1"></i> 返回</button>
                     <div class="mb-8 mt-8 text-center md:text-left w-full max-w-sm mx-auto md:mx-0"><h2 class="text-3xl font-black text-[#255a9e] mb-1">${title}</h2><p class="text-sm font-bold text-slate-400 uppercase tracking-widest">${sub}</p></div>
                     <form onsubmit="window.handleLogin(event)" class="space-y-5 w-full max-w-sm mx-auto md:mx-0">
-                        <div><label class="block text-xs font-bold text-slate-500 mb-1 ml-1">帳號 / Phone Number</label><div class="relative"><i data-lucide="user" class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300"></i><input name="username" type="text" required class="w-full pl-12 pr-4 py-3 bg-slate-50 border-2 border-slate-100 rounded-xl focus:border-[#255a9e] focus:bg-white outline-none transition-all font-medium text-slate-700 appearance-none" placeholder="請輸入帳號"></div></div>
+                        <div><label class="block text-xs font-bold text-slate-500 mb-1 ml-1">帳號 / Phone Number</label><div class="relative"><i data-lucide="user" class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300"></i><input name="username" type="text" required value="${(() => { try { return localStorage.getItem('rememberedUsername') || ''; } catch(e) { return ''; } })()}" class="w-full pl-12 pr-4 py-3 bg-slate-50 border-2 border-slate-100 rounded-xl focus:border-[#255a9e] focus:bg-white outline-none transition-all font-medium text-slate-700 appearance-none" placeholder="請輸入帳號"></div></div>
                         <div><label class="block text-xs font-bold text-slate-500 mb-1 ml-1">密碼 / Password</label><div class="relative"><i data-lucide="lock" class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300"></i><input id="login_password" name="password" type="password" required class="w-full pl-12 pr-12 py-3 bg-slate-50 border-2 border-slate-100 rounded-xl focus:border-[#255a9e] focus:bg-white outline-none transition-all font-medium text-slate-700 appearance-none" placeholder="請輸入密碼"><button type="button" onclick="window.togglePassword('login_password')" class="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center text-slate-400 hover:text-slate-600"><i id="login_password_eye" data-lucide="eye" class="w-5 h-5"></i></button></div></div>
+                        <div class="flex items-center gap-2 pt-1">
+                            <input type="checkbox" name="rememberMe" id="rememberMe" ${(() => { try { return localStorage.getItem('rememberedUsername') ? 'checked' : ''; } catch(e) { return ''; } })()} class="w-4 h-4 accent-[#255a9e] cursor-pointer">
+                            <label for="rememberMe" class="text-sm text-slate-600 cursor-pointer select-none">💾 記住我的帳號</label>
+                        </div>
                         <div class="pt-2"><button type="submit" ${state.isLoading?'disabled':''} class="w-full bg-[#255a9e] hover:bg-[#1e4880] text-white font-bold py-3.5 rounded-xl shadow-lg shadow-blue-900/20 transition-all transform active:scale-95 flex items-center justify-center tracking-wide">${state.isLoading ? '連線中...' : '登入系統 Login'}</button></div>
                     </form>
                     ${(() => {
-                        // v114: form 模式也顯示生物辨識 (不依賴 state.users, 直接顯示)
+                        // v121: form 模式也顯示生物辨識 (不依賴 state.users, 直接顯示) + 裝置偵測
                         if (!_isWebAuthnSupported()) return '';
+                        if (!window.shouldShowBiometricOption()) return '';
                         const registered = window.getRegisteredBiometricUsers();
                         if (registered.length === 0) return '';
                         const targets = registered.slice(0, 5).map(r => {
@@ -3382,7 +3502,7 @@
                     </div>
                 </div>`;
             }
-            return `<div class="min-h-dvh w-full flex items-center justify-center p-0 md:p-4 login-bg-pattern"><div class="w-full md:max-w-5xl bg-white md:rounded-[2rem] shadow-none md:shadow-[0_20px_60px_-15px_rgba(0,0,0,0.3)] overflow-hidden flex min-h-dvh md:min-h-[600px] animate-fade-in relative z-10 flex-col md:flex-row">${content}${visualPanel}</div><div class="fixed bottom-2 md:bottom-4 text-slate-400/50 text-[10px] md:text-xs font-mono w-full text-center pointer-events-none">System Ver v114 生物辨識版 (2026-08-19)</div></div>`;
+            return `<div class="min-h-dvh w-full flex items-center justify-center p-0 md:p-4 login-bg-pattern"><div class="w-full md:max-w-5xl bg-white md:rounded-[2rem] shadow-none md:shadow-[0_20px_60px_-15px_rgba(0,0,0,0.3)] overflow-hidden flex min-h-dvh md:min-h-[600px] animate-fade-in relative z-10 flex-col md:flex-row">${content}${visualPanel}</div><div class="fixed bottom-2 md:bottom-4 text-slate-400/50 text-[10px] md:text-xs font-mono w-full text-center pointer-events-none">System Ver v121 生物辨識版 (2026-08-19)</div></div>`;
         }
 
         function renderForgotModal() {
@@ -4489,15 +4609,31 @@
         function renderOrders() {
             const isAdmin = state.currentUser.role === 'admin';
             const isSupplier = state.currentUser.role === 'supplier';
-            
+
+            // v121: 點客戶後看訂單明細
+            if (state.selectedClientId && (isAdmin || isSupplier)) {
+                return renderClientOrdersDetail();
+            }
+
+            // v121: 雙模式切換
+            if (state.orderView === 'byClient' && (isAdmin || isSupplier)) {
+                return renderOrdersByClient();
+            }
+
             const rowsHtml = window.generateOrderRows();
-            
+
             return `<div class="p-2 md:p-8 animate-fade-in h-full flex flex-col pt-20 md:pt-8 overflow-y-auto">
                 <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4 md:mb-6 px-2 md:px-0">
                     <h2 class="text-2xl font-bold text-slate-800">訂單管理</h2>
-                    ${(isAdmin || isSupplier) ? `<div class="flex items-center gap-2 bg-white p-1 rounded-lg border border-slate-200 shadow-sm w-full md:w-auto"><button onclick="window.setView('orders','all')" class="flex-1 md:flex-none px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${state.orderFilter==='all'?'bg-slate-800 text-white':'text-slate-500 hover:bg-slate-50'}">全部</button><button onclick="window.setView('orders','pending')" class="flex-1 md:flex-none px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${state.orderFilter==='pending'?'bg-slate-800 text-white':'text-slate-500 hover:bg-slate-50'}">待出貨</button><button onclick="window.setView('orders','unpaid')" class="flex-1 md:flex-none px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${state.orderFilter==='unpaid'?'bg-slate-800 text-white':'text-slate-500 hover:bg-slate-50'}">未收款</button></div>` : ''}
+                    ${(isAdmin || isSupplier) ? `<div class="flex items-center gap-1 bg-white p-1 rounded-lg border border-slate-200 shadow-sm w-full md:w-auto flex-wrap"><button onclick="window.setView('orders','all')" class="flex-1 md:flex-none px-2.5 py-1.5 rounded-md text-xs md:text-sm font-medium transition-colors ${state.orderFilter==='all'?'bg-slate-800 text-white':'text-slate-500 hover:bg-slate-50'}">📋 全部</button><button onclick="window.setView('orders','pending')" class="flex-1 md:flex-none px-2.5 py-1.5 rounded-md text-xs md:text-sm font-medium transition-colors ${state.orderFilter==='pending'?'bg-amber-500 text-white':'text-slate-500 hover:bg-slate-50'}">⏰ 待出貨</button><button onclick="window.setView('orders','completed')" class="flex-1 md:flex-none px-2.5 py-1.5 rounded-md text-xs md:text-sm font-medium transition-colors ${state.orderFilter==='completed'?'bg-green-600 text-white':'text-slate-500 hover:bg-slate-50'}">✓ 已出貨</button><button onclick="window.setView('orders','unpaid')" class="flex-1 md:flex-none px-2.5 py-1.5 rounded-md text-xs md:text-sm font-medium transition-colors ${state.orderFilter==='unpaid'?'bg-rose-600 text-white':'text-slate-500 hover:bg-slate-50'}">💰 未收款</button></div>` : ''}
                 </div>
-                ${(isAdmin || isSupplier) ? `<div class="mb-4 flex gap-2 px-2 md:px-0"><input id="orderSearchInput" type="text" oninput="window.handleOrderSearch(this.value)" value="${state.orderSearch}" placeholder="搜尋訂單、客戶、產品..." class="border border-slate-300 rounded-lg px-4 py-2 text-sm w-full md:w-96 shadow-sm focus:border-blue-500 outline-none transition-colors">${isAdmin ? `<button onclick="window.openAdminOrderModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow hover:bg-blue-700 flex-shrink-0 active:scale-95 transition-all">代客下單</button>` : ''}</div>` : ''}
+                ${(isAdmin || isSupplier) ? `<div class="mb-4 flex gap-2 px-2 md:px-0 flex-wrap"><input id="orderSearchInput" type="text" oninput="window.handleOrderSearch(this.value)" value="${state.orderSearch}" placeholder="搜尋訂單、客戶、產品..." class="border border-slate-300 rounded-lg px-4 py-2 text-sm flex-1 min-w-[200px] md:w-96 shadow-sm focus:border-blue-500 outline-none transition-colors">${isAdmin || isSupplier ? `<select onchange="window.setOrderSort(this.value)" class="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white shadow-sm focus:border-blue-500 outline-none"><option value="newest" ${(state.orderSort||'newest')==='newest'?'selected':''}>📅 最新下單</option><option value="oldest" ${state.orderSort==='oldest'?'selected':''}>📅 最早下單</option><option value="client" ${state.orderSort==='client'?'selected':''}>👤 客戶名稱</option><option value="amount_desc" ${state.orderSort==='amount_desc'?'selected':''}>💰 金額高→低</option><option value="amount_asc" ${state.orderSort==='amount_asc'?'selected':''}>💰 金額低→高</option><option value="pending_first" ${state.orderSort==='pending_first'?'selected':''}>⏰ 待出貨優先</option></select>` : ''}${isAdmin ? `<button onclick="window.openAdminOrderModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow hover:bg-blue-700 flex-shrink-0 active:scale-95 transition-all">代客下單</button>` : ''}</div>` : ''}
+                ${(isAdmin || isSupplier) ? `<div class="mb-4 flex gap-2 px-2 md:px-0">
+                    <div class="bg-slate-100 p-1 rounded-xl flex gap-1 flex-1 md:flex-none">
+                        <button onclick="window.setOrderView('list')" class="flex-1 md:flex-none px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${state.orderView==='list'?'bg-slate-800 text-white shadow-sm':'text-slate-500 hover:bg-slate-50'}">📋 全部訂單</button>
+                        <button onclick="window.setOrderView('byClient')" class="flex-1 md:flex-none px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${state.orderView==='byClient'?'bg-emerald-600 text-white shadow-sm':'text-slate-500 hover:bg-slate-50'}">👤 依客戶</button>
+                    </div>
+                </div>` : ''}
                 <div class="bg-transparent md:bg-white md:rounded-xl md:shadow-sm md:border border-slate-200 flex-1 overflow-hidden flex flex-col mx-[-0.5rem] md:mx-0 px-2 md:px-0">
                     <div class="overflow-x-hidden md:overflow-x-auto custom-scrollbar flex-1 pb-24 md:pb-0">
                         <table class="w-full text-left text-sm block md:table">
@@ -4521,6 +4657,131 @@
                             </tbody>
                         </table>
                     </div>
+                </div>
+            </div>`;
+        }
+
+        // v121: 依客戶模式 (新功能)
+        function renderOrdersByClient() {
+            const isAdmin = state.currentUser.role === 'admin';
+            const isSupplier = state.currentUser.role === 'supplier';
+            // 取得訂單
+            let orders = [];
+            if (isAdmin) orders = state.orders || [];
+            else if (isSupplier) orders = (state.orders || []).filter(o => (o.items || []).some(i => (i.supplierName || '自有') === state.currentUser.name));
+            if ((isAdmin || isSupplier) && state.orderFilter !== 'all') {
+                if (state.orderFilter === 'pending') orders = orders.filter(o => o.status === 'pending');
+                else if (state.orderFilter === 'completed') orders = orders.filter(o => o.status === 'completed' || o.status === 'shipped');
+                else if (state.orderFilter === 'unpaid') orders = orders.filter(o => o.paymentStatus === 'unpaid');
+            }
+            if (state.orderSearch) {
+                const term = state.orderSearch.toLowerCase();
+                orders = orders.filter(o => o.id.toLowerCase().includes(term) || (o.clientName||'').toLowerCase().includes(term));
+            }
+            const summaries = window.getClientOrderSummary(orders);
+            // 加上客戶資訊
+            const enriched = summaries.map(s => {
+                const u = (state.users || []).find(u => u.username === s.clientId);
+                return { ...s, user: u, isDormant: s.lastDate ? (Date.now() - new Date(s.lastDate).getTime() > 90 * 86400000) : true };
+            }).filter(s => !state.orderSearch || s.clientName.toLowerCase().includes(state.orderSearch.toLowerCase()));
+            // 排序: 待出貨最多優先
+            enriched.sort((a, b) => {
+                if (b.pending !== a.pending) return b.pending - a.pending;
+                return b.total - a.total;
+            });
+            // 計算總計
+            const totalRevenue = enriched.reduce((s, e) => s + e.total, 0);
+            const totalUnpaid = enriched.reduce((s, e) => s + e.unpaidAmount, 0);
+            const totalPending = enriched.reduce((s, e) => s + e.pending, 0);
+            // 顏色
+            const getCardClass = (s) => {
+                if (s.pending >= 3) return 'bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-400';
+                if (s.unpaid > 0) return 'bg-gradient-to-r from-emerald-50 to-green-50 border-2 border-emerald-300';
+                if (s.isDormant) return 'bg-slate-50 border-2 border-slate-200 opacity-70';
+                return 'bg-white border-2 border-slate-200';
+            };
+            const isVIP = (s) => s.total >= 20000;
+            return `<div class="p-2 md:p-8 animate-fade-in h-full flex flex-col pt-20 md:pt-8 overflow-y-auto">
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4 px-2 md:px-0">
+                    <h2 class="text-2xl font-bold text-slate-800">訂單管理 <span class="text-base text-slate-400 font-normal">(依客戶)</span></h2>
+                    ${(isAdmin || isSupplier) ? `<div class="flex items-center gap-1 bg-white p-1 rounded-lg border border-slate-200 shadow-sm w-full md:w-auto flex-wrap"><button onclick="window.setView('orders','all')" class="flex-1 md:flex-none px-2.5 py-1.5 rounded-md text-xs md:text-sm font-medium transition-colors ${state.orderFilter==='all'?'bg-slate-800 text-white':'text-slate-500 hover:bg-slate-50'}">📋 全部</button><button onclick="window.setView('orders','pending')" class="flex-1 md:flex-none px-2.5 py-1.5 rounded-md text-xs md:text-sm font-medium transition-colors ${state.orderFilter==='pending'?'bg-amber-500 text-white':'text-slate-500 hover:bg-slate-50'}">⏰ 待出貨</button><button onclick="window.setView('orders','completed')" class="flex-1 md:flex-none px-2.5 py-1.5 rounded-md text-xs md:text-sm font-medium transition-colors ${state.orderFilter==='completed'?'bg-green-600 text-white':'text-slate-500 hover:bg-slate-50'}">✓ 已出貨</button><button onclick="window.setView('orders','unpaid')" class="flex-1 md:flex-none px-2.5 py-1.5 rounded-md text-xs md:text-sm font-medium transition-colors ${state.orderFilter==='unpaid'?'bg-rose-600 text-white':'text-slate-500 hover:bg-slate-50'}">💰 未收款</button></div>` : ''}
+                </div>
+                <div class="mb-4 flex gap-2 px-2 md:px-0 flex-wrap">
+                    <input id="orderSearchInput" type="text" oninput="window.handleOrderSearch(this.value)" value="${state.orderSearch}" placeholder="搜尋客戶..." class="border border-slate-300 rounded-lg px-4 py-2 text-sm flex-1 min-w-[200px] md:w-96 shadow-sm focus:border-blue-500 outline-none">
+                    <div class="bg-slate-100 p-1 rounded-xl flex gap-1">
+                        <button onclick="window.setOrderView('list')" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-colors text-slate-500 hover:bg-slate-50">📋 全部訂單</button>
+                        <button onclick="window.setOrderView('byClient')" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-colors bg-emerald-600 text-white shadow-sm">👤 依客戶</button>
+                    </div>
+                </div>
+                ${enriched.length === 0 ? `<div class="text-center text-slate-400 py-12"><i data-lucide="users" class="w-16 h-16 mx-auto mb-3 opacity-30"></i><p>沒有客戶訂單</p></div>` : `
+                <div class="space-y-2 px-2 md:px-0 pb-24 md:pb-4">
+                    ${enriched.map(s => {
+                        const u = s.user || {};
+                        const initial = (s.clientName || '?').charAt(0);
+                        return `<div onclick="window.openClientOrders('${s.clientId}')" class="${getCardClass(s)} rounded-xl p-3 cursor-pointer hover:shadow-lg transition-all active:scale-[0.99]">
+                            <div class="flex items-center gap-3">
+                                <div class="w-12 h-12 md:w-10 md:h-10 rounded-full ${s.pending >= 3 ? 'bg-amber-500' : (isVIP(s) ? 'bg-emerald-500' : (s.isDormant ? 'bg-slate-300' : 'bg-blue-500'))} text-white flex items-center justify-center font-black text-lg shrink-0">${initial}</div>
+                                <div class="flex-1 min-w-0">
+                                    <div class="font-bold text-sm flex items-center gap-1 flex-wrap">
+                                        <span>${s.clientName}</span>
+                                        ${s.pending >= 3 ? '<span>🔥</span>' : ''}
+                                        ${isVIP(s) ? '<span class="text-[9px] bg-amber-400 text-white px-1.5 py-0.5 rounded">VIP</span>' : ''}
+                                    </div>
+                                    <div class="text-[11px] text-slate-500 mt-0.5">
+                                        ${u.city || '未填縣市'} · ${s.count} 筆${s.lastDate ? ' · 最近 '+s.lastDate.slice(5) : ''}
+                                    </div>
+                                </div>
+                                <div class="text-right shrink-0">
+                                    <div class="text-base md:text-sm font-black ${s.pending >= 3 ? 'text-amber-600' : (isVIP(s) ? 'text-emerald-600' : 'text-blue-600')}">$${s.total.toLocaleString()}</div>
+                                    <div class="text-[10px] mt-0.5">
+                                        ${s.pending > 0 ? `<span class="text-red-600 font-bold">⏰ ${s.pending} 待出貨</span>` : (s.unpaid > 0 ? `<span class="text-amber-600">💰 未收 $${s.unpaidAmount.toLocaleString()}</span>` : '<span class="text-green-600">✓ 已完成</span>')}
+                                    </div>
+                                </div>
+                            </div>
+                            ${s.isDormant && s.count === 0 ? '<div class="text-right text-[10px] text-slate-400 mt-1">💤 90天未下單</div>' : ''}
+                        </div>`;
+                    }).join('')}
+                </div>
+                <div class="hidden md:grid grid-cols-4 gap-2 mt-4 px-2">
+                    <div class="bg-blue-50 rounded-lg p-3 text-center"><div class="text-[10px] text-slate-500">總客戶</div><div class="text-lg font-black text-blue-600">${enriched.length}</div></div>
+                    <div class="bg-amber-50 rounded-lg p-3 text-center"><div class="text-[10px] text-slate-500">待出貨</div><div class="text-lg font-black text-amber-600">${totalPending} 筆</div></div>
+                    <div class="bg-emerald-50 rounded-lg p-3 text-center"><div class="text-[10px] text-slate-500">總營業額</div><div class="text-lg font-black text-emerald-600">$${totalRevenue.toLocaleString()}</div></div>
+                    <div class="bg-rose-50 rounded-lg p-3 text-center"><div class="text-[10px] text-slate-500">未收款</div><div class="text-lg font-black text-rose-600">$${totalUnpaid.toLocaleString()}</div></div>
+                </div>`}
+            </div>`;
+        }
+
+        // v121: 點客戶後的訂單明細
+        function renderClientOrdersDetail() {
+            const cid = state.selectedClientId;
+            let orders = (state.orders || []).filter(o => o.clientId === cid);
+            const client = (state.users || []).find(u => u.username === cid);
+            const clientName = client?.name || orders[0]?.clientName || cid;
+            if (state.orderSort === 'newest' || !state.orderSort) orders.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+            const totalAmount = orders.reduce((s, o) => s + (o.totalAmount || 0), 0);
+            return `<div class="p-2 md:p-8 animate-fade-in h-full flex flex-col pt-20 md:pt-8 overflow-y-auto">
+                <div class="flex items-center gap-3 mb-4 px-2 md:px-0">
+                    <button onclick="window.closeClientOrders()" class="bg-white p-2 rounded-full shadow hover:bg-slate-50 shrink-0"><i data-lucide="arrow-left" class="w-5 h-5 text-slate-700"></i></button>
+                    <div class="w-10 h-10 md:w-12 md:h-12 rounded-full bg-blue-500 text-white flex items-center justify-center font-black text-lg shrink-0">${clientName.charAt(0)}</div>
+                    <div class="flex-1 min-w-0">
+                        <h2 class="text-xl md:text-2xl font-bold text-slate-800">${clientName}</h2>
+                        <div class="text-xs text-slate-500">${orders.length} 筆訂單 · 總金額 $${totalAmount.toLocaleString()}</div>
+                    </div>
+                </div>
+                <div class="space-y-2 px-2 md:px-0 pb-24 md:pb-4">
+                    ${orders.length === 0 ? '<div class="text-center text-slate-400 py-12">這個客戶還沒有訂單</div>' : orders.map(o => {
+                        const itemsText = (o.items || []).slice(0, 2).map(i => i.name).join(' + ') + ((o.items || []).length > 2 ? ` +${(o.items||[]).length - 2}項` : '');
+                        const isPending = o.status === 'pending';
+                        const cardClass = isPending ? 'border-2 border-amber-300 bg-amber-50' : 'border border-slate-200 bg-white';
+                        return `<div class="${cardClass} rounded-lg p-3">
+                            <div class="flex justify-between items-start mb-1">
+                                <span class="text-xs font-bold text-slate-700">#${o.id} · ${o.date||''}</span>
+                                ${isPending ? '<span class="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-bold">⏰ 待出貨</span>' : '<span class="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded">已出貨</span>'}
+                            </div>
+                            <div class="text-sm text-slate-700">${itemsText || '-'}</div>
+                            <div class="text-right text-base font-bold text-blue-600">$${(o.totalAmount||0).toLocaleString()}</div>
+                        </div>`;
+                    }).join('')}
                 </div>
             </div>`;
         }
@@ -4841,7 +5102,7 @@
                     </div>
                 </div>
 
-                <!-- 客戶留言板 (v114 新樣式: 跟 sidebar 進入的相同) -->
+                <!-- 客戶留言板 (v121 新樣式: 跟 sidebar 進入的相同) -->
                 <div class="bg-white rounded-2xl shadow-xl overflow-hidden flex flex-col border-t-4 border-blue-500" style="min-height: 500px;">
                     <!-- 對話 header (v92 樣式) -->
                     <div class="p-4 border-b bg-white flex items-center gap-3">
@@ -5206,8 +5467,10 @@
             return `<div class="p-4 md:p-8 animate-fade-in h-full overflow-y-auto pt-20 md:pt-8 pb-24 md:pb-8">
                 <div class="max-w-6xl mx-auto">
                     ${(() => {
-                        // v114: 生物辨識狀態橫幅 (在公告下方)
+                        // v121: 生物辨識狀態橫幅 (在公告下方) - 加裝置偵測
                         if (typeof _isWebAuthnSupported === 'undefined' || !_isWebAuthnSupported()) return '';
+                        // v121: 沒硬體就不顯示 (電腦版通常沒有)
+                        if (!window.shouldShowBiometricOption()) return '';
                         const username = state.currentUser?.username;
                         if (!username) return '';
                         const isRegistered = window.isBiometricRegistered(username);
@@ -5679,7 +5942,7 @@
                         }
                     });
                 });
-                // v114: 管理員只看到「客戶→自己」的訊息 (收件人是自己)
+                // v121: 管理員只看到「客戶→自己」的訊息 (收件人是自己)
                 const myUid = state.currentUser?.uid;
                 const myName = state.currentUser?.name;
                 const unread = (state.messages || []).filter(m => {
@@ -5700,7 +5963,7 @@
                     });
                 });
             } else if (role === 'supplier') {
-                // v114: 供應商只看到「管理員回覆給自己」的訊息 (隱私修正)
+                // v121: 供應商只看到「管理員回覆給自己」的訊息 (隱私修正)
                 const myUid = state.currentUser?.uid;
                 const myName = state.currentUser?.name;
                 const unread = (state.messages || []).filter(m => {
@@ -5729,7 +5992,7 @@
                     });
                 });
             } else if (role === 'client') {
-                // v114: 客戶只看到「管理員回覆給自己」的訊息 (隱私修正)
+                // v121: 客戶只看到「管理員回覆給自己」的訊息 (隱私修正)
                 const myUid = state.currentUser?.uid;
                 const myName = state.currentUser?.name;
                 const unread = (state.messages || []).filter(m => {
@@ -5904,7 +6167,7 @@
             return renderMessagesAdmin();
         }
 
-        // ============ v114 新版: 簡單對話框 (客戶/供應商用) ============
+        // ============ v121 新版: 簡單對話框 (客戶/供應商用) ============
         function renderMessagesSimple() {
             const role = state.currentUser?.role;
             const myUid = state.currentUser?.uid;
@@ -5926,7 +6189,7 @@
                 const admin = (state.users || []).find(u => u.role === 'admin');
                 if (!admin?.lastSeen) return true;
                 const lastSeenTime = admin.lastSeen.seconds ? admin.lastSeen.seconds * 1000 : new Date(admin.lastSeen).getTime();
-                return (Date.now() - lastSeenTime) > 60 * 1000;  // v114: 1 分鐘
+                return (Date.now() - lastSeenTime) > 60 * 1000;  // v121: 1 分鐘
             })();
             const statusText = isOffline ? '🔴 離線' : '🟢 線上';
 
@@ -5966,7 +6229,7 @@
             </div>`;
         }
 
-        // ============ v114 新版: 管理員版 (對話清單 + 對話) ============
+        // ============ v121 新版: 管理員版 (對話清單 + 對話) ============
         function renderMessagesAdmin() {
             // 找出所有對話對象 (排除自己)
             const conversations = {};
@@ -6096,7 +6359,7 @@
             }
             const bubbleColor = isMine ? 'bg-blue-600 text-white' : 'bg-white border';
             const dir = isMine ? 'flex-row-reverse' : '';
-            // v114: 管理員可在每則訊息加刪除按鈕
+            // v121: 管理員可在每則訊息加刪除按鈕
             const canDelete = viewerRole === 'admin' && m.docId;
             return `<div class="flex gap-2 ${dir} group">
                 <div class="w-8 h-8 rounded-full ${roleColor} text-white flex items-center justify-center text-xs font-bold shrink-0">${(displayName||'?')[0]}</div>
@@ -6113,7 +6376,7 @@
         // 管理員選擇對話
         window.selectConversation = (convId) => { state.activeMessageConv = convId; renderApp(); };
 
-        // v114: 刪除單則訊息 (管理員) + 權限檢查
+        // v121: 刪除單則訊息 (管理員) + 權限檢查
         window.deleteMessage = async (docId) => {
             if (state.currentUser?.role !== 'admin') {
                 return showToast("只有管理員可以刪除訊息", "error", 3000);
@@ -6124,12 +6387,12 @@
                 await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'messages', docId));
                 showToast('✓ 訊息已刪除', 'success', 2000);
             } catch (e) {
-                console.error('[v114 刪除訊息失敗]', e);
+                console.error('[v121 刪除訊息失敗]', e);
                 showToast('刪除失敗: ' + e.message, 'error', 3000);
             }
         };
 
-        // v114: 刪除整個對話 (管理員, 一次清掉某人所有訊息) + 權限檢查
+        // v121: 刪除整個對話 (管理員, 一次清掉某人所有訊息) + 權限檢查
         window.deleteConversation = async (partnerId, partnerName) => {
             if (state.currentUser?.role !== 'admin') {
                 return showToast("只有管理員可以刪除對話", "error", 3000);
@@ -6172,12 +6435,12 @@
                 }
                 showToast(`✓ 已刪除 ${success} 則${fail > 0 ? ` (${fail} 失敗)` : ''}`, 'success', 3000);
             } catch (e) {
-                console.error('[v114 刪除對話失敗]', e);
+                console.error('[v121 刪除對話失敗]', e);
                 showToast('刪除失敗: ' + e.message, 'error', 3000);
             }
         };
 
-        // v114: 刪除整個帳號 (使用者 + 該使用者所有訊息) + 權限檢查
+        // v121: 刪除整個帳號 (使用者 + 該使用者所有訊息) + 權限檢查
         window.deleteAccountAndMessages = async (userId, userName) => {
             if (state.currentUser?.role !== 'admin') {
                 return showToast("只有管理員可以刪除帳號", "error", 3000);
@@ -6231,11 +6494,11 @@
                         userDeleted = true;
                     }
                 } catch (e) {
-                    console.error('[v114 刪除使用者失敗]', e);
+                    console.error('[v121 刪除使用者失敗]', e);
                 }
                 showToast(`✓ 已刪除帳號${userDeleted ? '' : ' (使用者可能已被刪)'}, 訊息 ${msgSuccess} 則${msgFail > 0 ? ` (${msgFail} 失敗)` : ''}`, userDeleted ? 'success' : 'info', 4000);
             } catch (e) {
-                console.error('[v114 刪除帳號失敗]', e);
+                console.error('[v121 刪除帳號失敗]', e);
                 showToast('刪除失敗: ' + e.message, 'error', 4000);
             }
         };
@@ -6299,7 +6562,17 @@
                         <div class="mb-4">
                             <input id="crmSearchInput" type="text" oninput="window.handleCRMSearch(this.value)" value="${state.crmSearch}" placeholder="搜尋名稱或電話..." class="w-full md:max-w-md border border-slate-300 rounded-lg px-4 py-2 text-sm shadow-sm focus:border-blue-500 outline-none transition-colors">
                         </div>
-                        ${state.crmType === 'client' && !state.crmSearch ? `<div class="flex gap-2 overflow-x-auto pb-2 mb-2 custom-scrollbar"><button onclick="window.setCRMView('list','client',undefined)" class="whitespace-nowrap px-3 py-1 rounded-full text-xs font-bold border ${state.activeCity===undefined?'bg-blue-600 text-white border-blue-600':'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}">全部</button>${TAIWAN_CITIES.map(c=>`<button onclick="window.setCRMView('list','client','${c}')" class="whitespace-nowrap px-3 py-1 rounded-full text-xs font-bold border ${state.activeCity===c?'bg-blue-600 text-white border-blue-600':'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}">${c}</button>`).join('')}</div>` : ''}
+                        ${state.crmType === 'client' && !state.crmSearch ? (() => {
+                            // v121: 計算每個縣市的客戶數
+                            const allClients = (state.users || []).filter(u => u.role === 'client');
+                            const cityCount = {};
+                            allClients.forEach(c => {
+                                const city = c.city || '未設定';
+                                cityCount[city] = (cityCount[city] || 0) + 1;
+                            });
+                            const totalClients = allClients.length;
+                            return `<div class="flex gap-2 overflow-x-auto pb-2 mb-2 custom-scrollbar"><button onclick="window.setCRMView('list','client',undefined)" class="whitespace-nowrap px-3 py-1 rounded-full text-xs font-bold border ${state.activeCity===undefined?'bg-blue-600 text-white border-blue-600':'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}">全部 (${totalClients})</button>${TAIWAN_CITIES.map(c=>{const cnt = cityCount[c] || 0; return `<button onclick="window.setCRMView('list','client','${c}')" class="whitespace-nowrap px-3 py-1 rounded-full text-xs font-bold border ${state.activeCity===c?'bg-blue-600 text-white border-blue-600':(cnt>0?'bg-blue-50 text-blue-700 border-blue-300 hover:bg-blue-100':'bg-white text-slate-500 border-slate-200 hover:bg-slate-50')}">${c} (${cnt})</button>`;}).join('')}${cityCount['未設定'] ? `<button onclick="window.setCRMView('list','client','未設定')" class="whitespace-nowrap px-3 py-1 rounded-full text-xs font-bold border bg-amber-50 text-amber-700 border-amber-300 hover:bg-amber-100">未設定 (${cityCount['未設定']})</button>` : ''}</div>`;
+                        })() : ''}
                         <div class="bg-white rounded-xl shadow-sm border border-slate-200 flex-1 overflow-hidden flex flex-col">
                             <div class="overflow-x-auto custom-scrollbar flex-1">
                                 <table class="w-full text-left text-sm">
@@ -6419,9 +6692,11 @@
                             state.currentView = 'welcome';
                             state.loginMode = 'select';
                             renderApp();
-                            // v114: 自動登入也啟動 lastSeen 定期更新
+                            // v121: 自動登入也啟動 lastSeen 定期更新
                             setTimeout(() => { if (window.updateLastSeen) window.updateLastSeen(); }, 1000);
                             setInterval(() => { if (window.updateLastSeen) window.updateLastSeen(); }, 60000);
+                            // v121: 自動登入後 1.5 秒嘗試生物辨識 (零點擊登入)
+                            setTimeout(() => { if (window.tryAutoBiometric) window.tryAutoBiometric(); }, 1500);
                         }
                     }
                 } catch (e) {}
